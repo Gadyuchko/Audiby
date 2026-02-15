@@ -1,0 +1,29 @@
+[project]
+name = "audiby"
+version = "0.1.0"
+description = "Local voice-to-text with push-to-talk and active window injection"
+readme = "README.md"
+authors = [
+    { name = "Roman Hadiuchko", email = "gadyuchko.roman@gmail.com" }
+]
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "faster-whisper>=1.2.1",
+    "pillow>=12.1.1",
+    "pynput>=1.8.1",
+    "pystray>=0.19.5",
+    "sounddevice>=0.5.5",
+]
+
+[project.scripts]
+audiby = "audiby.__main__:main"
+
+[build-system]
+requires = ["uv_build>=0.10.2,<0.11.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.19.0",
+    "pytest>=9.0.2",
+]
