@@ -2,11 +2,14 @@
 
 import sys
 
+from audiby.config import Config
+
 
 def main() -> int:
     """Application entry point."""
     print("Audiby v0.1.0 - starting up...")
-    print("Project structure initialized. Core pipeline not yet implemented.")
+    config = Config()
+    print(f"Config loaded from {config.config_dir}")
     return 0
 
 

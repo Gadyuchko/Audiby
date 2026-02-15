@@ -15,4 +15,4 @@ def test_main_prints_startup_message(capsys) -> None:
 
     assert exit_code == 0
     assert "Audiby v0.1.0 - starting up..." in captured.out
-    assert "Project structure initialized. Core pipeline not yet implemented." in captured.out
+    assert "Config loaded from" in captured.out
