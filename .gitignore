@@ -26,3 +26,12 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
+
+# environmental vars
+.env
+.env.*
+
+# coverage
+.coverage
+htmlcov/
+coverage.xml
