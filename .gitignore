@@ -35,3 +35,6 @@ Thumbs.db
 .coverage
 htmlcov/
 coverage.xml
+
+# local runtime data (dev APPDATA override)
+_tmp_appdata/
