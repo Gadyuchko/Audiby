@@ -1,64 +1,75 @@
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from audiby.app import setup_logging
 
+from audiby.app import setup_logging
 from audiby.config import Config
-from audiby.constants import LOG_BACKUP_COUNT, LOG_FORMAT, LOG_MAX_BYTES, LOG_FILENAME, LOG_DIRNAME
+from audiby.constants import (
+    LOG_BACKUP_COUNT,
+    LOG_DIRNAME,
+    LOG_FILENAME,
+    LOG_FORMAT,
+    LOG_MAX_BYTES,
+)
 
 
 def test_setup_logging_configures_rotating_handler(tmp_path) -> None:
     """Logging configures rotating file handler."""
-    _logger = logging.getLogger()
+    logger = logging.getLogger()
 
-    "Clean up logger if something already was there"
-    for handler in list(_logger.handlers):
-        _logger.removeHandler(handler)
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
         handler.close()
 
-    "Bootstrap logging"
-    _config = Config(config_dir=tmp_path)
-    setup_logging(_config)
+    config = Config(config_dir=tmp_path)
+    setup_logging(config)
 
-    assert len(_logger.handlers) >= 1
+    assert len(logger.handlers) >= 1
 
-    rotating_handlers = [h for h in _logger.handlers if isinstance(h, RotatingFileHandler)]
+    rotating_handlers = [h for h in logger.handlers if isinstance(h, RotatingFileHandler)]
 
     assert len(rotating_handlers) == 1
-    _fileHandler = rotating_handlers[0]
+    file_handler = rotating_handlers[0]
 
-    assert _fileHandler.maxBytes == LOG_MAX_BYTES
-    assert _fileHandler.backupCount == LOG_BACKUP_COUNT
-    assert _fileHandler.formatter is not None
-    assert _fileHandler.formatter._fmt == LOG_FORMAT
+    assert file_handler.maxBytes == LOG_MAX_BYTES
+    assert file_handler.backupCount == LOG_BACKUP_COUNT
+    assert file_handler.formatter is not None
+    assert file_handler.formatter._fmt == LOG_FORMAT
 
-    _moduleLogger = logging.getLogger("audiby.config")
-    _moduleLogger.info("Test log message")
-    _fileHandler.flush()
+    module_logger = logging.getLogger("audiby.config")
+    module_logger.info("Test log message")
+    sample_transcript = "THIS SHOULD NEVER BE LOGGED"
+    module_logger.info("Transcription completed chars=%d", len(sample_transcript))
+    file_handler.flush()
 
-    _logFilePath = Path(_fileHandler.baseFilename)
-    assert _logFilePath.exists()
-    assert _logFilePath.parent.exists()
-    assert _logFilePath.is_file()
+    log_file_path = Path(file_handler.baseFilename)
+    assert log_file_path.exists()
+    assert log_file_path.parent.exists()
+    assert log_file_path.is_file()
 
-    assert _logFilePath.parent.name == LOG_DIRNAME
-    assert _logFilePath.name == LOG_FILENAME
+    assert log_file_path.parent.name == LOG_DIRNAME
+    assert log_file_path.name == LOG_FILENAME
+
+    content = log_file_path.read_text(encoding="utf-8")
+    assert "Test log message" in content
+    assert "Transcription completed chars=" in content
+    assert sample_transcript not in content
 
 
 def test_setup_logging_is_idempotent(tmp_path) -> None:
     """Calling setup_logging multiple times is idempotent."""
-    _logger = logging.getLogger()
-    for handler in list(_logger.handlers):
-        _logger.removeHandler(handler)
+    logger = logging.getLogger()
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
         handler.close()
 
     config = Config(config_dir=tmp_path)
 
     setup_logging(config)
-    handlers_1 = [h for h in _logger.handlers if isinstance(h, RotatingFileHandler)]
+    handlers_1 = [h for h in logger.handlers if isinstance(h, RotatingFileHandler)]
 
     setup_logging(config)
-    handlers_2 = [h for h in _logger.handlers if isinstance(h, RotatingFileHandler)]
+    handlers_2 = [h for h in logger.handlers if isinstance(h, RotatingFileHandler)]
 
     assert len(handlers_1) == 1
     assert len(handlers_2) == 1

@@ -33,7 +33,10 @@ def setup_logging(config: Config) -> Path:
     log_dir = config.config_dir / LOG_DIRNAME
     log_file = log_dir / LOG_FILENAME
 
-    log_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise OSError(f"Unable to create log directory: {log_dir}") from exc
 
     root_logger = logging.getLogger()
 
@@ -46,7 +49,12 @@ def setup_logging(config: Config) -> Path:
             break
 
     if file_handler is None:
-        file_handler = RotatingFileHandler(log_file, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUP_COUNT, encoding="utf-8")
+        file_handler = RotatingFileHandler(
+            log_file,
+            maxBytes=LOG_MAX_BYTES,
+            backupCount=LOG_BACKUP_COUNT,
+            encoding="utf-8",
+        )
         file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
         root_logger.addHandler(file_handler)
 
