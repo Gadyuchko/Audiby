@@ -21,7 +21,6 @@ def test_default_config_created(tmp_path):
     config_file = tmp_path / CONFIG_FILENAME
     assert config_file.exists()
 
-    print(config_file)
     with open(config_file, encoding="utf-8") as f:
         data = json.load(f)
 
@@ -102,3 +101,17 @@ def test_forward_compatibility_missing_keys_merged(tmp_path):
     assert config.get(CONFIG_KEY_MODEL) == DEFAULT_MODEL_SIZE
     assert config.get(CONFIG_KEY_AUDIO_DEVICE) is None
     assert config.get(CONFIG_KEY_AUTOSTART) == DEFAULT_AUTOSTART
+
+
+def test_non_object_json_resets_to_defaults(tmp_path):
+    """Valid non-object JSON payload is treated as invalid config shape."""
+    config_file = tmp_path / CONFIG_FILENAME
+    config_file.write_text('["not", "an", "object"]', encoding="utf-8")
+
+    config = Config(config_dir=tmp_path)
+    assert config.get(CONFIG_KEY_HOTKEY) == DEFAULT_HOTKEY
+    assert config.get(CONFIG_KEY_MODEL) == DEFAULT_MODEL_SIZE
+
+    with open(config_file, encoding="utf-8") as f:
+        data = json.load(f)
+    assert data == DEFAULT_CONFIG

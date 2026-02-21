@@ -66,6 +66,16 @@ class Config:
             self.save()
             return
 
+
+        if not isinstance(loaded, dict):
+            logger.warning(
+                "Invalid config shape at %s (expected object, got %s) - resetting to defaults",
+                self._config_path,
+                type(loaded).__name__,
+            )
+            self._data = dict(DEFAULT_CONFIG)
+            self.save()
+            return
         # Merge missing keys from defaults (loaded keys take precedence)
         self._data = {**DEFAULT_CONFIG, **loaded}
 
