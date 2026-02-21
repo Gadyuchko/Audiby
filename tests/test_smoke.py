@@ -8,8 +8,9 @@ def test_package_import_smoke() -> None:
     import audiby  # noqa: F401
 
 
-def test_main_prints_startup_message(capsys) -> None:
+def test_main_prints_startup_message(capsys, monkeypatch) -> None:
     """Entry point prints startup messages and exits cleanly."""
+    monkeypatch.setattr(__main__, "run_app", lambda _config: None)
     exit_code = __main__.main()
     captured = capsys.readouterr()
 
