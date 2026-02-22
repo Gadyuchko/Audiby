@@ -26,3 +26,5 @@ LOG_FILENAME = "audiby.log"
 LOG_MAX_BYTES = 1_048_576
 LOG_BACKUP_COUNT = 5
 LOG_DIRNAME = "logs"
+
+SUPPORTED_MODELS = ("tiny", "base", "small", "medium", "large-v3")
