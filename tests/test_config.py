@@ -2,7 +2,7 @@
 
 import json
 
-from audiby.config import Config, DEFAULT_CONFIG
+from audiby.config import APP_NAME, Config, DEFAULT_CONFIG, get_appdata_path
 from audiby.constants import (
     CONFIG_FILENAME,
     CONFIG_KEY_AUDIO_DEVICE,
@@ -115,3 +115,11 @@ def test_non_object_json_resets_to_defaults(tmp_path):
     with open(config_file, encoding="utf-8") as f:
         data = json.load(f)
     assert data == DEFAULT_CONFIG
+
+
+def test_get_appdata_path_uses_local_dev_override_when_enabled(monkeypatch, tmp_path):
+    """Explicit dev flag uses repo-local temporary appdata folder."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("AUDIBY_DEV_APPDATA", "1")
+
+    assert get_appdata_path() == (tmp_path / ".tmp-appdata" / APP_NAME)
