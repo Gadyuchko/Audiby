@@ -7,13 +7,15 @@ Only model lifecycle metadata (name/path/success-failure) may be logged.
 import logging
 from pathlib import Path
 
-from faster_whisper import WhisperModel
+from faster_whisper import download_model
 
 from audiby.config import get_appdata_path
 from audiby.constants import SUPPORTED_MODELS
 from audiby.exceptions import ModelError
 
 logger = logging.getLogger(__name__)
+
+_MODEL_BINARY = "model.bin"
 
 
 def get_model_root() -> Path:
@@ -41,29 +43,29 @@ def _normalize_model_name(model_name: str) -> str:
 
 
 def exists(model_name: str) -> bool:
-    """Return True if the expected local model directory already exists."""
+    """Return True if a complete model download exists at the expected local path."""
     normalized = _normalize_model_name(model_name)
     model_path = get_model_root() / normalized
-    return model_path.exists() and model_path.is_dir()
+    return (model_path / _MODEL_BINARY).is_file()
 
 
 def download(model_name: str) -> Path:
     """Download a Whisper model via faster-whisper and return its local path."""
     normalized = _normalize_model_name(model_name)
-    download_root = get_model_root()
-    model_path = download_root / normalized
+    model_path = get_model_root() / normalized
 
-    logger.info("Downloading model %s to %s", normalized, download_root)
+    logger.info("Downloading model %s to %s", normalized, model_path)
 
-    # faster-whisper downloads models as a side effect of model initialization.
     try:
-        WhisperModel(normalized, download_root=str(download_root))
-    except (RuntimeError, OSError, ValueError) as exc:
+        download_model(normalized, output_dir=str(model_path))
+    except (OSError, ValueError) as exc:
         logger.error("Failed to download model %s: %s", normalized, exc)
         raise ModelError(f"Failed to download model {normalized}: {exc}") from exc
 
-    if not model_path.exists() or not model_path.is_dir():
-        raise ModelError(f"Model {normalized} not found in {model_path}")
+    if not (model_path / _MODEL_BINARY).is_file():
+        raise ModelError(
+            f"Model {normalized} download incomplete: {_MODEL_BINARY} missing in {model_path}"
+        )
 
     logger.info("Model %s is available at %s", normalized, model_path)
     return model_path

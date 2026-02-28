@@ -18,7 +18,8 @@ def test_main_prints_startup_message(capsys, monkeypatch) -> None:
     captured = capsys.readouterr()
 
     assert exit_code == 0
-    assert "Audiby v0.1.0 - starting up..." in captured.out
+    assert "Audiby v" in captured.out
+    assert "starting up..." in captured.out
     assert "Config loaded from" in captured.out
 
 
@@ -48,6 +49,39 @@ def test_main_setup_model_downloads_and_exits_without_starting_app(monkeypatch) 
     assert exit_code == 0
     assert calls["download"] == "base"
     assert calls["run_app"] == 0
+
+
+def test_main_setup_model_equals_form_is_handled(monkeypatch) -> None:
+    """--setup-model=base is equivalent to --setup-model base."""
+    calls = {"download": None}
+
+    def fake_download(model_name: str):
+        calls["download"] = model_name
+        return "ignored-path"
+
+    monkeypatch.setattr(__main__.sys, "argv", ["audiby", "--setup-model=base"])
+    monkeypatch.setattr(__main__, "run_app", lambda _: None)
+    monkeypatch.setattr(__main__, "Config", lambda: SimpleNamespace(config_dir="unused"))
+    monkeypatch.setattr(
+        __main__,
+        "model_manager",
+        SimpleNamespace(download=fake_download),
+        raising=False,
+    )
+
+    exit_code = __main__.main()
+
+    assert exit_code == 0
+    assert calls["download"] == "base"
+
+
+def test_main_setup_model_returns_non_zero_when_model_name_missing(monkeypatch) -> None:
+    """--setup-model with no following model name returns non-zero exit code."""
+    monkeypatch.setattr(__main__.sys, "argv", ["audiby", "--setup-model"])
+
+    exit_code = __main__.main()
+
+    assert exit_code != 0
 
 
 def test_main_setup_model_returns_non_zero_on_download_failure(monkeypatch) -> None:

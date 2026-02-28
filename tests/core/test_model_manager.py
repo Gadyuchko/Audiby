@@ -7,6 +7,8 @@ import pytest
 from audiby.core import model_manager
 from audiby.exceptions import ModelError
 
+_MODEL_BIN = "model.bin"
+
 
 @pytest.fixture
 def fake_model_appdata(monkeypatch, tmp_path) -> Path:
@@ -18,6 +20,11 @@ def fake_model_appdata(monkeypatch, tmp_path) -> Path:
         lambda: fake_appdata,
     )
     return fake_appdata
+
+
+# ---------------------------------------------------------------------------
+# get_model_root
+# ---------------------------------------------------------------------------
 
 
 def test_get_model_root_returns_path(fake_model_appdata):
@@ -63,15 +70,29 @@ def test_get_model_root_does_not_create_directory(fake_model_appdata):
     assert not result.exists()
 
 
-def test_exists_returns_true_when_model_directory_exists(fake_model_appdata):
-    """exists() returns True when the expected model directory is present."""
-    (fake_model_appdata / "models" / "base").mkdir(parents=True)
+# ---------------------------------------------------------------------------
+# exists
+# ---------------------------------------------------------------------------
+
+
+def test_exists_returns_true_when_model_binary_present(fake_model_appdata):
+    """exists() returns True when model.bin exists inside the model directory."""
+    model_dir = fake_model_appdata / "models" / "base"
+    model_dir.mkdir(parents=True)
+    (model_dir / _MODEL_BIN).touch()
 
     assert model_manager.exists("base") is True
 
 
 def test_exists_returns_false_when_model_directory_is_missing(fake_model_appdata):
     """exists() returns False when the expected model directory is absent."""
+    assert model_manager.exists("base") is False
+
+
+def test_exists_returns_false_when_directory_exists_but_model_bin_missing(fake_model_appdata):
+    """exists() returns False when the model directory exists but model.bin is absent."""
+    (fake_model_appdata / "models" / "base").mkdir(parents=True)
+
     assert model_manager.exists("base") is False
 
 
@@ -85,7 +106,9 @@ def test_exists_does_not_create_model_directory(fake_model_appdata):
 
 def test_exists_normalizes_supported_model_name(fake_model_appdata):
     """exists() sanitizes supported model names (trim/case-normalize)."""
-    (fake_model_appdata / "models" / "base").mkdir(parents=True)
+    model_dir = fake_model_appdata / "models" / "base"
+    model_dir.mkdir(parents=True)
+    (model_dir / _MODEL_BIN).touch()
 
     assert model_manager.exists(" Base ") is True
 
@@ -108,38 +131,51 @@ def test_exists_raises_model_error_for_path_traversal_like_name(fake_model_appda
         model_manager.exists("../base")
 
 
-def test_download_uses_whisper_model_with_download_root(monkeypatch, fake_model_appdata):
-    """download() delegates to faster-whisper using download_root under model root."""
+# ---------------------------------------------------------------------------
+# download
+# ---------------------------------------------------------------------------
+
+
+def _make_fake_download_model(fake_model_appdata, calls: dict, *, create_bin: bool = True):
+    """Return a fake download_model that simulates the faster-whisper download side effect."""
+
+    def fake_download_model(model_size_or_path, output_dir=None, **kwargs):
+        calls["model"] = model_size_or_path
+        calls["output_dir"] = output_dir
+        if output_dir is not None:
+            Path(output_dir).mkdir(parents=True, exist_ok=True)
+            if create_bin:
+                (Path(output_dir) / _MODEL_BIN).touch()
+
+    return fake_download_model
+
+
+def test_download_uses_download_model_with_output_dir(monkeypatch, fake_model_appdata):
+    """download() delegates to faster-whisper download_model using output_dir."""
     calls = {}
-
-    class FakeWhisperModel:
-        def __init__(self, model_size_or_path, **kwargs):
-            calls["model"] = model_size_or_path
-            calls["kwargs"] = kwargs
-            # Simulate faster-whisper side effect: downloaded model directory now exists.
-            Path(kwargs["download_root"]).mkdir(parents=True, exist_ok=True)
-            (Path(kwargs["download_root"]) / model_size_or_path).mkdir(parents=True, exist_ok=True)
-
-    monkeypatch.setattr(model_manager, "WhisperModel", FakeWhisperModel, raising=False)
+    monkeypatch.setattr(
+        model_manager,
+        "download_model",
+        _make_fake_download_model(fake_model_appdata, calls),
+        raising=False,
+    )
 
     result = model_manager.download("base")
 
     assert calls["model"] == "base"
-    assert calls["kwargs"]["download_root"] == str(fake_model_appdata / "models")
+    assert calls["output_dir"] == str(fake_model_appdata / "models" / "base")
     assert result == fake_model_appdata / "models" / "base"
 
 
 def test_download_normalizes_supported_model_name(monkeypatch, fake_model_appdata):
     """download() reuses the same model-name validation/sanitization behavior."""
     calls = {}
-
-    class FakeWhisperModel:
-        def __init__(self, model_size_or_path, **kwargs):
-            calls["model"] = model_size_or_path
-            Path(kwargs["download_root"]).mkdir(parents=True, exist_ok=True)
-            (Path(kwargs["download_root"]) / model_size_or_path).mkdir(parents=True, exist_ok=True)
-
-    monkeypatch.setattr(model_manager, "WhisperModel", FakeWhisperModel, raising=False)
+    monkeypatch.setattr(
+        model_manager,
+        "download_model",
+        _make_fake_download_model(fake_model_appdata, calls),
+        raising=False,
+    )
 
     result = model_manager.download(" Base ")
 
@@ -148,29 +184,46 @@ def test_download_normalizes_supported_model_name(monkeypatch, fake_model_appdat
 
 
 def test_download_wraps_library_errors_in_model_error(monkeypatch, fake_model_appdata):
-    """download() surfaces library failures as ModelError."""
+    """download() surfaces library OSError as ModelError."""
 
-    class FakeWhisperModel:
-        def __init__(self, model_size_or_path, **kwargs):
-            raise RuntimeError("download failed")
+    def fake_download_model(model_size_or_path, output_dir=None, **kwargs):
+        raise OSError("disk full")
 
-    monkeypatch.setattr(model_manager, "WhisperModel", FakeWhisperModel, raising=False)
+    monkeypatch.setattr(model_manager, "download_model", fake_download_model, raising=False)
 
     with pytest.raises(ModelError):
         model_manager.download("base")
 
 
-def test_download_raises_model_error_if_model_still_missing_after_library_call(
+def test_download_raises_model_error_if_model_bin_missing_after_library_call(
     monkeypatch, fake_model_appdata
 ):
-    """download() must not report success if expected model directory is still missing."""
-
-    class FakeWhisperModel:
-        def __init__(self, model_size_or_path, **kwargs):
-            # Simulate library call returning without creating expected model dir.
-            Path(kwargs["download_root"]).mkdir(parents=True, exist_ok=True)
-
-    monkeypatch.setattr(model_manager, "WhisperModel", FakeWhisperModel, raising=False)
+    """download() must not report success if model.bin is absent after the library call."""
+    calls = {}
+    monkeypatch.setattr(
+        model_manager,
+        "download_model",
+        _make_fake_download_model(fake_model_appdata, calls, create_bin=False),
+        raising=False,
+    )
 
     with pytest.raises(ModelError):
         model_manager.download("base")
+
+
+def test_download_raises_model_error_for_empty_model_name(fake_model_appdata):
+    """download() rejects empty model names."""
+    with pytest.raises(ModelError):
+        model_manager.download("   ")
+
+
+def test_download_raises_model_error_for_path_traversal_like_name(fake_model_appdata):
+    """download() rejects unsafe path-like model names."""
+    with pytest.raises(ModelError):
+        model_manager.download("../base")
+
+
+def test_download_raises_model_error_for_unsupported_model(fake_model_appdata):
+    """download() rejects model names not in the supported allowlist."""
+    with pytest.raises(ModelError):
+        model_manager.download("not-a-model")

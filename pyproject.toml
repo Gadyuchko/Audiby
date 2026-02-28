@@ -22,6 +22,11 @@ audiby = "audiby.__main__:main"
 requires = ["uv_build>=0.10.2,<0.11.0"]
 build-backend = "uv_build"
 
+[tool.pytest.ini_options]
+markers = [
+    "integration: real network/filesystem tests — run with --run-integration",
+]
+
 [dependency-groups]
 dev = [
     "pyinstaller>=6.19.0",
