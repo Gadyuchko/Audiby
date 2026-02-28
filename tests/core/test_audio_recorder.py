@@ -200,6 +200,32 @@ class TestErrorHandling:
             recorder.start()
         assert q.empty()
 
+    def test_stream_start_failure_is_wrapped_and_state_reset(self, mocker):
+        """PortAudioError from InputStream.start() must be wrapped and recorder state reset."""
+        mock_stream = mocker.MagicMock()
+        mock_stream.start.side_effect = sd.PortAudioError("start failed")
+        mocker.patch("sounddevice.InputStream", return_value=mock_stream)
+
+        recorder = AudioRecorder(audio_queue=queue.Queue(), device_id=4)
+        with pytest.raises(AudioError):
+            recorder.start()
+
+        assert not recorder._recording.is_set()
+        assert recorder._stream is None
+        mock_stream.close.assert_called_once()
+
+    def test_stop_failure_is_wrapped_as_audio_error(self, mocker):
+        """PortAudioError from stream shutdown must surface as AudioError."""
+        mock_stream = mocker.MagicMock()
+        mock_stream.stop.side_effect = sd.PortAudioError("stop failed")
+        mocker.patch("sounddevice.InputStream", return_value=mock_stream)
+
+        recorder = AudioRecorder(audio_queue=queue.Queue(), device_id=9)
+        recorder.start()
+        with pytest.raises(AudioError):
+            recorder.stop()
+
+        assert recorder._stream is None
 
 # ---------------------------------------------------------------------------
 # Max recording duration guard

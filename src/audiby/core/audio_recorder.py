@@ -49,13 +49,24 @@ class AudioRecorder:
             raise AudioError(f"Could not open audio device: {err}") from err
 
         self._recording.set()
-        self._stream.start()
+        try:
+            self._stream.start()
+        except sd.PortAudioError as err:
+            self._recording.clear()
+            try:
+                self._stream.close()
+            finally:
+                self._stream = None
+            logger.error("Could not start audio stream on device %s: %s", self._device_id, err)
+            raise AudioError(f"Could not start audio stream: {err}") from err
         logger.info("Recording started (device=%s)", self._device_id)
 
     def _callback(self, indata: np.ndarray, frames: int, time, status) -> None:
         """Accumulate incoming audio chunks up to the max duration cap."""
         if not self._recording.is_set():
             return
+        if status:
+            logger.warning("Audio stream status (device=%s): %s", self._device_id, status)
         if self._accumulated_samples >= self.MAX_DURATION_SAMPLES:
             return  # cap reached, discard further input
 
@@ -70,9 +81,16 @@ class AudioRecorder:
         self._recording.clear()
 
         if self._stream is not None:
-            self._stream.stop()
-            self._stream.close()
+            stream = self._stream
             self._stream = None
+            try:
+                stream.stop()
+                stream.close()
+            except sd.PortAudioError as err:
+                logger.error("Could not stop audio stream on device %s: %s", self._device_id, err)
+                self._chunks = []
+                self._accumulated_samples = 0
+                raise AudioError(f"Could not stop audio stream: {err}") from err
 
         if self._chunks:
             audio = np.concatenate(self._chunks).flatten()
