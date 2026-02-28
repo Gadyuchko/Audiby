@@ -1,8 +1,4 @@
-"""Model lifecycle helpers for faster-whisper downloads and local presence checks.
-
-Privacy guardrail: logs must never include audio or transcript payload data.
-Only model lifecycle metadata (name/path/success-failure) may be logged.
-"""
+"""Model lifecycle helpers for faster-whisper downloads and local presence checks."""
 
 import logging
 from pathlib import Path
