@@ -28,3 +28,11 @@ LOG_BACKUP_COUNT = 5
 LOG_DIRNAME = "logs"
 
 SUPPORTED_MODELS = ("tiny", "base", "small", "medium", "large-v3")
+
+# Transcription constants
+TRANSCRIPTION_BEAM_SIZE = 5
+
+# Device mode policy for model loading
+TRANSCRIPTION_DEVICE_AUTO = "auto"
+TRANSCRIPTION_DEVICE_CUDA = "cuda"
+TRANSCRIPTION_DEVICE_CPU = "cpu"
