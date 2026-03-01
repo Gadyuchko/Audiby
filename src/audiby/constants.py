@@ -36,3 +36,8 @@ TRANSCRIPTION_BEAM_SIZE = 5
 TRANSCRIPTION_DEVICE_AUTO = "auto"
 TRANSCRIPTION_DEVICE_CUDA = "cuda"
 TRANSCRIPTION_DEVICE_CPU = "cpu"
+
+# Injection and clipboard constants
+INJECTION_PASTE_DELAY=0.1
+CF_UNICODETEXT=13 # the clipboard format identifier for UTF-16 text (Win)
+GMEM_MOVEABLE = 0x0002 # memory block pointer defined by Win API
