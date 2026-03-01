@@ -19,6 +19,7 @@ CloseClipboard = ctypes.windll.user32.CloseClipboard
 GlobalAlloc = ctypes.windll.kernel32.GlobalAlloc
 GlobalLock = ctypes.windll.kernel32.GlobalLock
 GlobalUnlock = ctypes.windll.kernel32.GlobalUnlock
+GlobalFree = ctypes.windll.kernel32.GlobalFree
 
 from audiby.exceptions import InjectionError
 
@@ -33,10 +34,15 @@ def get_text() -> str | None:
         handle = GetClipboardData(CF_UNICODETEXT)
         if not handle or handle == 0:
             return None
-        else:
-            # extract the actual text from the pointer to memory bucket
-            text = ctypes.c_wchar_p(handle).value.rstrip(u'\0')
-            return text
+        pointer = GlobalLock(handle)
+        if not pointer:
+            raise InjectionError("Failed to lock clipboard data")
+        try:
+            # extract the actual text from the memory block
+            text = ctypes.wstring_at(pointer)
+            return text.rstrip("\0")
+        finally:
+            GlobalUnlock(handle)
     except Exception as e:
         logger.error(f"Error while reading clipboard: {e}")
         raise InjectionError("Error while reading clipboard") from e
@@ -58,13 +64,19 @@ def set_text(text: str) -> None:
 
         # pointer to mem block and pin it in place temporary
         pointer = GlobalLock(handle)
+        if not pointer:
+            raise InjectionError("Failed to lock memory")
 
-        # copy text to mem block
-        ctypes.memmove(pointer, text, buffer_size)
-        # unpin mem block
-        GlobalUnlock(handle)
+        try:
+            # copy text to mem block
+            buffer = ctypes.create_unicode_buffer(text)
+            ctypes.memmove(pointer, buffer, buffer_size)
+        finally:
+            # unpin mem block
+            GlobalUnlock(handle)
 
         if not SetClipboardData(CF_UNICODETEXT, handle):
+            GlobalFree(handle)
             raise InjectionError("Failed to set clipboard data")
     except InjectionError:
         raise

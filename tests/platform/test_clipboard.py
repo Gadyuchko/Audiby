@@ -4,7 +4,7 @@ Tests validate Win32 clipboard get/set/backup/restore operations,
 error handling, CloseClipboard guarantee, and InjectionError wrapping.
 All Win32 API calls are fully mocked — no real clipboard access.
 """
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -41,7 +41,11 @@ def win32():
          patch(f"{_P}.GlobalAlloc") as m_alloc, \
          patch(f"{_P}.GlobalLock") as m_lock, \
          patch(f"{_P}.GlobalUnlock") as m_unlock, \
-         patch(f"{_P}.ctypes") as m_ctypes:
+         patch(f"{_P}.GlobalFree") as m_free, \
+         patch(f"{_P}.ctypes.sizeof") as m_sizeof, \
+         patch(f"{_P}.ctypes.wstring_at") as m_wstring_at, \
+         patch(f"{_P}.ctypes.create_unicode_buffer") as m_create_unicode_buffer, \
+         patch(f"{_P}.ctypes.memmove") as m_memmove:
 
         # Sensible defaults — all operations succeed
         m_open.return_value = True
@@ -51,7 +55,11 @@ def win32():
         m_alloc.return_value = 1  # non-null handle
         m_lock.return_value = 1  # non-null pointer
         m_unlock.return_value = True
-        m_ctypes.sizeof.return_value = 2  # wchar size
+        m_sizeof.return_value = 2  # wchar size
+        m_wstring_at.return_value = "clipboard-text"
+        m_create_unicode_buffer.side_effect = lambda text: text
+        m_memmove.return_value = None
+        m_free.return_value = True
 
         class _Win32:
             OpenClipboard = m_open
@@ -62,7 +70,11 @@ def win32():
             GlobalAlloc = m_alloc
             GlobalLock = m_lock
             GlobalUnlock = m_unlock
-            ctypes = m_ctypes
+            GlobalFree = m_free
+            sizeof = m_sizeof
+            wstring_at = m_wstring_at
+            create_unicode_buffer = m_create_unicode_buffer
+            memmove = m_memmove
 
         yield _Win32()
 
@@ -94,7 +106,7 @@ class TestClipboardGetText:
     def test_get_text_returns_clipboard_string(self, win32):
         """get_text() must return the clipboard text when CF_UNICODETEXT is available."""
         win32.GetClipboardData.return_value = 1
-        win32.ctypes.c_wchar_p.return_value.value = "hello world"
+        win32.wstring_at.return_value = "hello world"
 
         result = _get_text()()
 
@@ -105,7 +117,7 @@ class TestClipboardGetText:
     def test_get_text_calls_get_clipboard_data_with_cf_unicodetext(self, win32):
         """get_text() must request CF_UNICODETEXT (13) from GetClipboardData."""
         win32.GetClipboardData.return_value = 1
-        win32.ctypes.c_wchar_p.return_value.value = "test"
+        win32.wstring_at.return_value = "test"
 
         _get_text()()
 
@@ -146,7 +158,7 @@ class TestClipboardBackupRestore:
     def test_backup_returns_current_clipboard_text(self, win32):
         """backup() must return whatever get_text() returns."""
         win32.GetClipboardData.return_value = 1
-        win32.ctypes.c_wchar_p.return_value.value = "original"
+        win32.wstring_at.return_value = "original"
 
         result = _backup()()
 
@@ -172,7 +184,7 @@ class TestClipboardBackupRestore:
     def test_backup_restore_round_trip(self, win32):
         """backup → set_text → restore must leave clipboard in original state."""
         win32.GetClipboardData.return_value = 1
-        win32.ctypes.c_wchar_p.return_value.value = "original"
+        win32.wstring_at.return_value = "original"
 
         saved = _backup()()
         _set_text()("injected")
@@ -257,6 +269,15 @@ class TestCloseClipboardGuarantee:
 
         win32.CloseClipboard.assert_called_once()
 
+    def test_close_called_when_global_lock_fails(self, win32):
+        """CloseClipboard must be called even when GlobalLock returns null."""
+        win32.GlobalLock.return_value = 0
+
+        with pytest.raises(InjectionError):
+            _set_text()("test")
+
+        win32.CloseClipboard.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # Task 4.4 — InjectionError raised on Win32 API failures
@@ -302,3 +323,30 @@ class TestInjectionErrorOnFailure:
 
         with pytest.raises(InjectionError, match="[Oo]pen"):
             _set_text()("test")
+
+    def test_injection_error_on_global_lock_failure(self, win32):
+        """Failed GlobalLock (null pointer) must raise InjectionError."""
+        win32.GlobalLock.return_value = 0
+
+        with pytest.raises(InjectionError, match="[Ll]ock"):
+            _set_text()("test")
+
+    def test_get_text_uses_global_lock_and_unlock(self, win32):
+        """get_text() must lock and unlock clipboard data handle."""
+        win32.GetClipboardData.return_value = 123
+        win32.wstring_at.return_value = "locked text"
+
+        result = _get_text()()
+
+        assert result == "locked text"
+        win32.GlobalLock.assert_called_once_with(123)
+        win32.GlobalUnlock.assert_called_once_with(123)
+
+    def test_set_text_frees_memory_when_set_clipboard_data_fails(self, win32):
+        """set_text() must free allocated memory if SetClipboardData fails."""
+        win32.SetClipboardData.return_value = 0
+
+        with pytest.raises(InjectionError):
+            _set_text()("test")
+
+        win32.GlobalFree.assert_called_once()

@@ -4,11 +4,12 @@
 """
 import logging
 import time
-from queue import Queue, Empty
-from pynput.keyboard import Controller, Key
+from queue import Empty, Queue
+
 import audiby.platform.clipboard as clipboard
 from audiby.constants import INJECTION_PASTE_DELAY
 from audiby.exceptions import InjectionError
+from pynput.keyboard import Controller, Key
 
 logger = logging.getLogger(__name__)
 
@@ -18,13 +19,14 @@ class TextInjector:
         self._text_queue = text_queue
         try:
             self._keyboard = Controller()
-        except Exception as e:
-            logger.error(f"Failed to initialize keyboard controller: {e}")
-            raise RuntimeError("Failed to initialize keyboard controller") from e
+        except Exception as exc:
+            logger.error("Keyboard controller initialization failed")
+            raise InjectionError("Failed to initialize keyboard controller") from exc
 
     def inject(self) -> None:
         """Inject text from queue into active window."""
         backup_text = None
+        backup_captured = False
         try:
             text = self._text_queue.get_nowait()
         except Empty:
@@ -33,16 +35,19 @@ class TextInjector:
 
         try:
             backup_text = clipboard.backup()
+            backup_captured = True
             clipboard.set_text(text)
             with self._keyboard.pressed(Key.ctrl):
-                self._keyboard.press('v')
-                self._keyboard.release('v')
+                self._keyboard.press("v")
+                self._keyboard.release("v")
             time.sleep(INJECTION_PASTE_DELAY)
 
         except InjectionError:
+            logger.error("Text injection failed")
             raise
-        except Exception as e:
-            logger.error(f"Failed to inject text: {e}")
-            raise InjectionError("Failed to inject text") from e
+        except Exception as exc:
+            logger.error("Text injection failed with unexpected error")
+            raise InjectionError("Failed to inject text") from exc
         finally:
-            clipboard.restore(backup_text)
+            if backup_captured:
+                clipboard.restore(backup_text)
