@@ -57,6 +57,8 @@ def run_app(config: Config) -> None:
     try:
         app.start()
         app.stop_event.wait()  # blocks until shutdown is signaled
+    except KeyboardInterrupt:
+        logger.info("Interrupted by user")
     finally:
         app.shutdown()
 
@@ -91,6 +93,13 @@ def setup_logging(config: Config) -> Path:
         )
         file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
         root_logger.addHandler(file_handler)
+
+    # Console handler for live terminal output during development
+    if not any(isinstance(h, logging.StreamHandler) and not isinstance(h, RotatingFileHandler)
+               for h in root_logger.handlers):
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(logging.Formatter(LOG_FORMAT))
+        root_logger.addHandler(console_handler)
 
     root_logger.setLevel(getattr(logging, LOG_LEVEL))
 
@@ -132,6 +141,7 @@ class ApplicationOrchestrator:
 
     def on_hotkey_press(self) -> None:
         """Signal recording start — called by HotkeyManager on combo press."""
+        logger.debug("Hotkey pressed — starting recording")
         try:
             self._recording_event.set()
             self._recorder.start()
@@ -145,9 +155,11 @@ class ApplicationOrchestrator:
         Stopping the recorder pushes the captured audio buffer onto audio_queue
         for the transcriber worker to pick up.
         """
+        logger.debug("Hotkey released — stopping recording")
         try:
             self._recording_event.clear()
             self._recorder.stop()
+            logger.debug("Audio pushed to queue (queue size: %d)", self._audio_queue.qsize())
         except Exception as e:
             logger.error("Failed to stop recording: %s", e)
 
@@ -179,37 +191,37 @@ class ApplicationOrchestrator:
 
     def _transcriber_worker(self) -> None:
         """Poll audio_queue and transcribe each buffer until stop_event is set."""
+        logger.debug("Transcriber worker started")
         # continuous loop till stop event is set, probing queue for data and processing it
         while not self._stop_event.is_set():
             try:
                 audio = self._audio_queue.get(timeout=self._QUEUE_POLL_TIMEOUT)
 
                 # no exception for a timeout window, we got audio -> transcribe
+                logger.debug("Transcriber received audio buffer (samples: %d)", len(audio))
                 try:
                     self._transcriber.transcribe(audio)
+                    logger.debug("Transcription done (text_queue size: %d)", self._text_queue.qsize())
                 except Exception as e:
-                    logger.error("Transcription failed: %s", type(e).__name__)
+                    logger.error("Transcription failed: %s — %s", type(e).__name__, e)
 
             except queue.Empty:
                 # nothing in queue -> continue probing
                 continue
+        logger.debug("Transcriber worker stopped")
 
     def _injector_worker(self) -> None:
-        """Poll text_queue and inject each text payload until stop_event is set."""
-        # continuous loop till stop event is set, probing queue for data and processing it
+        """Call injector.inject() in a loop — inject() reads from text_queue internally."""
+        logger.debug("Injector worker started")
         while not self._stop_event.is_set():
             try:
-                self._text_queue.get(timeout=self._QUEUE_POLL_TIMEOUT)
-
-                # no exception for a timeout window, we have text to inject try injecting
-                try:
-                    self._injector.inject()
-                except Exception as e:
-                    logger.error("Text injection failed: %s", type(e).__name__)
-
-            except queue.Empty:
-                # nothing in queue -> continue probing
-                continue
+                self._injector.inject()
+            except Exception as e:
+                logger.error("Text injection failed: %s — %s", type(e).__name__, e)
+            # inject() returns immediately if queue is empty (get_nowait),
+            # so sleep briefly to avoid busy-spin
+            self._stop_event.wait(timeout=self._QUEUE_POLL_TIMEOUT)
+        logger.debug("Injector worker stopped")
 
     # Read-only accessors for pipeline queues and events.
     @property

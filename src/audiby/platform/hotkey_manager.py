@@ -53,6 +53,7 @@ class HotkeyManager:
         self._listener = Listener(on_press=self._on_key_press, on_release=self._on_key_release)
         try:
             self._listener.start()
+            logger.info("Hotkey listener started (combo: %s)", self._hotkey_set)
         except Exception as e:
             logger.error("Failed to start hotkey listener: %s", e)
             self._listener = None
@@ -71,12 +72,14 @@ class HotkeyManager:
             self._pressed.add(key)
         if self._hotkey_set == self._pressed and not self._combo_active:
             self._combo_active = True
+            logger.debug("Combo activated — firing press callback")
             self._on_press()
 
     def _on_key_release(self, key) -> None:
         """We check if released key is part of configured combo, remove it from pressed set and fire on_release callback in this case"""
         if self._combo_active and key in self._hotkey_set:
             self._combo_active = False
+            logger.debug("Combo deactivated — firing release callback")
             self._on_release()
         self._pressed.discard(key)
 

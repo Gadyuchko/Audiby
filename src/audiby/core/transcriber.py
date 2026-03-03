@@ -35,13 +35,13 @@ class Transcriber:
     ) -> None:
         device, compute_type = self._resolve_device_config(device_mode)
         try:
-            self._model = WhisperModel(model_path, device=device, compute_type=compute_type)
+            self._model = WhisperModel(str(model_path), device=device, compute_type=compute_type)
         except Exception as exc:
             if device_mode == "auto" and device == "cuda":
                 # Auto mode: CUDA failed, fall back to CPU
                 logger.warning("CUDA load failed, falling back to CPU: %s", exc)
                 try:
-                    self._model = WhisperModel(model_path, device="cpu", compute_type="int8")
+                    self._model = WhisperModel(str(model_path), device="cpu", compute_type="int8")
                 except Exception as fallback_exc:
                     raise ModelError(f"CPU fallback also failed: {fallback_exc}") from fallback_exc
             else:

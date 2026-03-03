@@ -29,7 +29,6 @@ class TextInjector:
         try:
             text = self._text_queue.get_nowait()
         except Empty:
-            logger.debug("Text queue is empty, skipping injection")
             return
 
         try:
