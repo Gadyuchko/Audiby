@@ -3,7 +3,6 @@
 Translates OS-level key events into press/release callbacks for a configured
 key combination. Platform-only module — contains no pipeline or business logic.
 
-@author Roman Hadiuchko
 """
 
 import logging

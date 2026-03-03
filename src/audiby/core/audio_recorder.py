@@ -18,7 +18,6 @@ class AudioRecorder:
     Manages recording lifecycle and delivers a float32 mono numpy buffer
     to the transcription queue on stop.
 
-    @author Roman Hadiuchko
     """
 
     MAX_DURATION_SAMPLES = DEFAULT_SAMPLE_RATE * 120  # 2 min cap

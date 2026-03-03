@@ -2,7 +2,6 @@
 The decision to use os clipboard as a text injection method resulted in the use of external libraries WinDLL user32 and kernel32,
 because pyperclip only does copy()/paste() and we need backup and restore functionality to preserve user data on paste.
 
-@author Roman Hadiuchko
 """
 
 import logging

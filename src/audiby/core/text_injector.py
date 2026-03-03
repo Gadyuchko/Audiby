@@ -1,6 +1,5 @@
 """Text injector for text manipulation from text queue and clipboard.
 
-@author Roman Hadiuchko
 """
 import logging
 import time

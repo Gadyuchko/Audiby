@@ -24,7 +24,6 @@ class Transcriber:
     Loads one WhisperModel instance at init and reuses it across transcriptions.
     Normalizes segment text and pushes non-empty results to the injection queue.
 
-    @author Roman Hadiuchko
     """
 
     def __init__(

@@ -108,7 +108,6 @@ class ApplicationOrchestrator:
     their respective queues. Call start() from the main thread to launch
     workers and the hotkey listener; call shutdown() to tear everything down.
 
-    @author Roman Hadiuchko
     """
 
     _QUEUE_POLL_TIMEOUT = 0.5  # seconds between stop_event checks in worker loops
