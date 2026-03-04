@@ -1,16 +1,17 @@
 """Behavior-focused tests for AudioRecorder.
 
 Tests validate recording lifecycle, queue output, default device handling,
-and PortAudioError → AudioError propagation. Hardware is fully mocked.
+and PortAudioError -> AudioError propagation. Hardware is fully mocked.
 """
 import queue
+
 import numpy as np
 import pytest
 import sounddevice as sd
 
+from audiby.constants import DEFAULT_SAMPLE_RATE
 from audiby.core.audio_recorder import AudioRecorder
 from audiby.exceptions import AudioError
-from audiby.constants import DEFAULT_SAMPLE_RATE
 
 
 # ---------------------------------------------------------------------------
@@ -18,17 +19,12 @@ from audiby.constants import DEFAULT_SAMPLE_RATE
 # ---------------------------------------------------------------------------
 
 def _make_chunk(frames: int = 1024) -> np.ndarray:
-    """Return a float32 mono chunk as sounddevice would deliver it.
-    We use zeros for tests because we don't care about contents, just the shape and type
-    """
+    """Return a float32 mono chunk as sounddevice would deliver it."""
     return np.zeros((frames, 1), dtype="float32")
 
 
-def _simulate_recording(recorder: AudioRecorder, chunks: list) -> None:
-    """
-    Drive recorder's internal callback with synthetic chunks, then stop.
-    Used to avoid real hardware while exercising the full data path.
-    """
+def _simulate_recording(recorder: AudioRecorder, chunks: list[np.ndarray]) -> None:
+    """Drive callback with synthetic chunks, then stop/close."""
     recorder.start()
     for chunk in chunks:
         recorder._callback(chunk, len(chunk), None, None)
@@ -48,6 +44,7 @@ class TestRecordingStart:
         recorder = AudioRecorder(audio_queue=queue.Queue())
         recorder.start()
         recorder.stop()
+        recorder.close()
 
         sd.InputStream.assert_called_once_with(
             samplerate=DEFAULT_SAMPLE_RATE,
@@ -65,15 +62,17 @@ class TestRecordingStart:
         recorder.start()
         assert recorder._recording.is_set()
         recorder.stop()
+        recorder.close()
 
     def test_double_start_is_idempotent(self, mocker):
         """Calling start() twice should not open a second stream."""
         mocker.patch("sounddevice.InputStream")
         recorder = AudioRecorder(audio_queue=queue.Queue())
         recorder.start()
-        recorder.start()  # second call — should be a no-op
+        recorder.start()
         assert sd.InputStream.call_count == 1
         recorder.stop()
+        recorder.close()
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +88,7 @@ class TestRecordingStop:
 
         chunks = [_make_chunk(512), _make_chunk(512)]
         _simulate_recording(recorder, chunks)
+        recorder.close()
 
         assert not q.empty()
         result = q.get_nowait()
@@ -104,6 +104,7 @@ class TestRecordingStop:
 
         chunks = [_make_chunk(256), _make_chunk(512), _make_chunk(128)]
         _simulate_recording(recorder, chunks)
+        recorder.close()
 
         result = q.get_nowait()
         assert len(result) == 256 + 512 + 128
@@ -115,14 +116,20 @@ class TestRecordingStop:
         recorder.start()
         recorder.stop()
         assert not recorder._recording.is_set()
+        recorder.close()
 
-    def test_stop_closes_stream(self, mocker):
-        """InputStream.stop() and .close() must be called on recorder stop."""
+    def test_stop_keeps_stream_primed(self, mocker):
+        """stop() should keep stream open to avoid startup clipping on next burst."""
         mock_stream = mocker.MagicMock()
         mocker.patch("sounddevice.InputStream", return_value=mock_stream)
         recorder = AudioRecorder(audio_queue=queue.Queue())
         recorder.start()
         recorder.stop()
+
+        mock_stream.stop.assert_not_called()
+        mock_stream.close.assert_not_called()
+
+        recorder.close()
         mock_stream.stop.assert_called_once()
         mock_stream.close.assert_called_once()
 
@@ -133,6 +140,7 @@ class TestRecordingStop:
         recorder = AudioRecorder(audio_queue=q)
         recorder.start()
         recorder.stop()
+        recorder.close()
         assert q.empty()
 
 
@@ -144,9 +152,10 @@ class TestDefaultDevice:
     def test_no_device_id_passes_none_to_input_stream(self, mocker):
         """device=None must be passed to InputStream when not configured."""
         mocker.patch("sounddevice.InputStream")
-        recorder = AudioRecorder(audio_queue=queue.Queue())  # no device_id
+        recorder = AudioRecorder(audio_queue=queue.Queue())
         recorder.start()
         recorder.stop()
+        recorder.close()
         _, kwargs = sd.InputStream.call_args
         assert kwargs.get("device") is None
 
@@ -156,12 +165,13 @@ class TestDefaultDevice:
         recorder = AudioRecorder(audio_queue=queue.Queue(), device_id=3)
         recorder.start()
         recorder.stop()
+        recorder.close()
         _, kwargs = sd.InputStream.call_args
         assert kwargs["device"] == 3
 
 
 # ---------------------------------------------------------------------------
-# Error handling — PortAudioError → AudioError
+# Error handling - PortAudioError -> AudioError
 # ---------------------------------------------------------------------------
 
 class TestErrorHandling:
@@ -186,7 +196,7 @@ class TestErrorHandling:
         with caplog.at_level(logging.ERROR, logger="audiby.core.audio_recorder"):
             with pytest.raises(AudioError):
                 recorder.start()
-        assert caplog.records  # at least one ERROR logged
+        assert caplog.records
 
     def test_audio_error_does_not_push_to_queue(self, mocker):
         """Queue must remain empty when start() fails with PortAudioError."""
@@ -214,18 +224,20 @@ class TestErrorHandling:
         assert recorder._stream is None
         mock_stream.close.assert_called_once()
 
-    def test_stop_failure_is_wrapped_as_audio_error(self, mocker):
-        """PortAudioError from stream shutdown must surface as AudioError."""
+    def test_close_failure_is_wrapped_as_audio_error(self, mocker):
+        """PortAudioError from stream close must surface as AudioError."""
         mock_stream = mocker.MagicMock()
         mock_stream.stop.side_effect = sd.PortAudioError("stop failed")
         mocker.patch("sounddevice.InputStream", return_value=mock_stream)
 
         recorder = AudioRecorder(audio_queue=queue.Queue(), device_id=9)
         recorder.start()
+        recorder.stop()
         with pytest.raises(AudioError):
-            recorder.stop()
+            recorder.close()
 
         assert recorder._stream is None
+
 
 # ---------------------------------------------------------------------------
 # Max recording duration guard
@@ -239,12 +251,42 @@ class TestMaxDuration:
         recorder = AudioRecorder(audio_queue=q)
         recorder.start()
 
-        # Push more than 2 min of data (2*60*16000 = 1,920,000 frames)
         big_chunk = np.zeros((1_000_000, 1), dtype="float32")
         recorder._callback(big_chunk, 1_000_000, None, None)
         recorder._callback(big_chunk, 1_000_000, None, None)
-        recorder._callback(big_chunk, 1_000_000, None, None)  # 3M frames > 2min cap
+        recorder._callback(big_chunk, 1_000_000, None, None)
         recorder.stop()
+        recorder.close()
 
         result = q.get_nowait()
-        assert len(result) <= DEFAULT_SAMPLE_RATE * 120  # ≤ 2 min
+        assert len(result) <= DEFAULT_SAMPLE_RATE * 120
+
+
+class TestPrimeAndPreroll:
+    def test_prime_opens_stream_without_recording(self, mocker):
+        """prime() should open/start stream but not set recording flag."""
+        mock_stream = mocker.MagicMock()
+        mocker.patch("sounddevice.InputStream", return_value=mock_stream)
+        recorder = AudioRecorder(audio_queue=queue.Queue())
+
+        recorder.prime()
+
+        assert not recorder._recording.is_set()
+        mock_stream.start.assert_called_once()
+        recorder.close()
+
+    def test_start_seeds_audio_with_preroll(self, mocker):
+        """Recent pre-roll audio should be included at recording start."""
+        mocker.patch("sounddevice.InputStream", return_value=mocker.MagicMock())
+        q = queue.Queue()
+        recorder = AudioRecorder(audio_queue=q)
+
+        recorder.prime()
+        recorder._callback(_make_chunk(160), 160, None, None)
+        recorder.start()
+        recorder._callback(_make_chunk(160), 160, None, None)
+        recorder.stop()
+        recorder.close()
+
+        result = q.get_nowait()
+        assert len(result) >= 320

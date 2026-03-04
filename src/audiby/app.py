@@ -276,12 +276,33 @@ class ApplicationOrchestrator:
         and stops properly based on event triggers. It also implements recovery
         logic with exponential back off for potential failures during the recording start or stop processes.
 
+        Lifecycle summary for maintainers:
+        - Worker primes the recorder stream once at startup. This removes device
+          startup latency that can clip first words on short hotkey presses.
+        - While hotkey is not active, recorder keeps only a small rolling pre-roll
+          window (bounded memory) inside AudioRecorder.
+        - On hotkey press/release we only toggle intent (`_recording_event`);
+          this worker performs actual `start()` / `stop()` calls.
+        - Stream is fully released via `recorder.close()` in worker shutdown.
+
         :raises Exception: If audio recording start or stop fails after recovery attempts.
         :raises Exception: If cleanup stop fails during shutdown.
         """
         logger.debug("Audio worker started")
         is_recording = False
         try:
+            # Prime stream once so short utterances are not clipped by device startup latency.
+            while not self._stop_event.is_set():
+                try:
+                    self._recorder.prime()
+                    self._audio_failures = 0
+                    break
+                except Exception as e:
+                    logger.error("Audio prime failed: %s - %s", type(e).__name__, e)
+                    should_retry, self._audio_failures = self._schedule_recovery("Audio", self._audio_failures)
+                    if not should_retry:
+                        return
+
             while not self._stop_event.is_set():
                 want_recording = self._recording_event.is_set()
                 if want_recording and not is_recording:
@@ -315,6 +336,10 @@ class ApplicationOrchestrator:
                     self._recorder.stop()
                 except Exception as e:
                     logger.exception("Audio cleanup stop failed during shutdown: %s - %s", type(e).__name__, e)
+            try:
+                self._recorder.close()
+            except Exception as e:
+                logger.exception("Audio stream close failed during shutdown: %s - %s", type(e).__name__, e)
             logger.debug("Audio worker stopped")
 
     # Read-only accessors for pipeline queues and events.
