@@ -57,11 +57,21 @@ Set `AUDIBY_DEV_APPDATA=1` to redirect all runtime data (config, models, logs) t
 AUDIBY_DEV_APPDATA=1 uv run python -m audiby
 ```
 
-### Optional: Enable NVIDIA GPU Acceleration (Windows)
+### Optional: Enable NVIDIA GPU Acceleration
 
 Audiby can run fully on CPU. GPU is optional, but faster.
 
 Use this only if you have an NVIDIA GPU and want acceleration.
+The commands below are PowerShell examples for Windows. On Linux/macOS, use equivalent shell commands and platform-specific install paths.
+
+Recommended working combo:
+- CUDA Toolkit: `12.x` (for example `12.9`)
+- cuDNN: `9.x` built for CUDA 12 (for example `9.19` with `12.9` backend)
+
+Why these components:
+- NVIDIA Driver: lets Windows/apps communicate with GPU hardware.
+- CUDA Toolkit: provides GPU compute runtime and libraries.
+- cuDNN: optimized deep-learning runtime used by Whisper inference.
 
 1. Check driver status:
 
@@ -73,13 +83,24 @@ nvidia-smi
 - If it fails, install/update the NVIDIA driver first.
 - Driver download: https://www.nvidia.com/Download/index.aspx
 
-2. Install CUDA Toolkit 12.x (Windows x86_64).
+2. Install CUDA Toolkit 12.x.
 - CUDA downloads: https://developer.nvidia.com/cuda-downloads
-3. Install cuDNN 9 for CUDA 12 (Windows).
+3. Install cuDNN 9 for CUDA 12.
 - cuDNN downloads: https://developer.nvidia.com/cudnn
 - CUDA Windows install guide: https://docs.nvidia.com/cuda/cuda-installation-guide-microsoft-windows/index.html
 - cuDNN Windows install guide: https://docs.nvidia.com/deeplearning/cudnn/installation/latest/windows.html
-4. Open a new terminal and verify required DLLs:
+4. Ensure these folders are in `Path`:
+
+```text
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9\bin
+C:\Program Files\NVIDIA\CUDNN\v9.19\bin\12.9\x64
+```
+
+You can also use `%CUDA_PATH%\bin` instead of a hardcoded CUDA version if `%CUDA_PATH%` points to CUDA 12.
+
+5. Fully restart your IDE/terminal after editing environment variables.
+
+6. Open a new terminal and verify required DLLs:
 
 ```powershell
 python -c "import ctypes; ctypes.WinDLL('cublas64_12.dll'); print('cublas OK')"
@@ -89,6 +110,9 @@ python -c "import ctypes; ctypes.WinDLL('cudnn64_9.dll'); print('cudnn OK')"
 If both commands print `OK`, GPU runtime is ready.
 
 If you see `cublas64_12.dll is not found` or `cudnn64_9.dll is not found`, CUDA/cuDNN is not installed correctly or not on `PATH`.
+
+Troubleshooting:
+- If full-path DLL loading works but name-based loading fails, the process is using stale/missing `Path`. Restart IDE/terminal (or sign out/in) and recheck.
 
 Note: when GPU runtime is unavailable, Audiby automatically falls back to CPU mode so dictation still works.
 
