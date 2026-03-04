@@ -202,7 +202,18 @@ class ApplicationOrchestrator:
         logger.info("Orchestrator shut down")
 
     def _transcriber_worker(self) -> None:
-        """Poll audio_queue and transcribe each buffer until stop_event is set."""
+        """
+        Handles audio transcription by continuously polling an audio queue, processing audio data,
+        and submitting it to a transcription module. Manages retries and recovery for the
+        transcriber in case of failures. Operates until a stop event is triggered.
+
+        While the method is running:
+          - It retrieves audio data from a queue.
+          - Processes the data using a transcription module.
+          - Handles exceptions during audio transcription and attempts to recover.
+
+        :return: None
+        """
         logger.debug("Transcriber worker started")
         # continuous loop till stop event is set, probing queue for data and processing it
         while not self._stop_event.is_set():
