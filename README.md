@@ -57,6 +57,41 @@ Set `AUDIBY_DEV_APPDATA=1` to redirect all runtime data (config, models, logs) t
 AUDIBY_DEV_APPDATA=1 uv run python -m audiby
 ```
 
+### Optional: Enable NVIDIA GPU Acceleration (Windows)
+
+Audiby can run fully on CPU. GPU is optional, but faster.
+
+Use this only if you have an NVIDIA GPU and want acceleration.
+
+1. Check driver status:
+
+```powershell
+nvidia-smi
+```
+
+- If it works, your NVIDIA driver is installed.
+- If it fails, install/update the NVIDIA driver first.
+- Driver download: https://www.nvidia.com/Download/index.aspx
+
+2. Install CUDA Toolkit 12.x (Windows x86_64).
+- CUDA downloads: https://developer.nvidia.com/cuda-downloads
+3. Install cuDNN 9 for CUDA 12 (Windows).
+- cuDNN downloads: https://developer.nvidia.com/cudnn
+- CUDA Windows install guide: https://docs.nvidia.com/cuda/cuda-installation-guide-microsoft-windows/index.html
+- cuDNN Windows install guide: https://docs.nvidia.com/deeplearning/cudnn/installation/latest/windows.html
+4. Open a new terminal and verify required DLLs:
+
+```powershell
+python -c "import ctypes; ctypes.WinDLL('cublas64_12.dll'); print('cublas OK')"
+python -c "import ctypes; ctypes.WinDLL('cudnn64_9.dll'); print('cudnn OK')"
+```
+
+If both commands print `OK`, GPU runtime is ready.
+
+If you see `cublas64_12.dll is not found` or `cudnn64_9.dll is not found`, CUDA/cuDNN is not installed correctly or not on `PATH`.
+
+Note: when GPU runtime is unavailable, Audiby automatically falls back to CPU mode so dictation still works.
+
 ### Run Tests
 
 ```bash
