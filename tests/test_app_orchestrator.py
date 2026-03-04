@@ -165,6 +165,21 @@ class TestHotkeySignaling:
         orchestrator.on_hotkey_release()
         recorder_cls.return_value.stop.assert_not_called()
 
+    def test_hotkey_press_wakes_audio_worker_immediately(self, orchestrator, patch_components):
+        """Press should wake audio worker without waiting full poll interval."""
+        recorder_cls, _, _, _ = patch_components
+        orchestrator._QUEUE_POLL_TIMEOUT = 1.0
+
+        orchestrator.start()
+        try:
+            orchestrator.on_hotkey_press()
+            time.sleep(0.1)
+        finally:
+            orchestrator.on_hotkey_release()
+            orchestrator.shutdown()
+
+        recorder_cls.return_value.start.assert_called()
+
 
 # ---------------------------------------------------------------------------
 # Task 1.4 — Sequential bursts process independently (AC: #2)

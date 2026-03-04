@@ -73,7 +73,12 @@ class Transcriber:
             raise
         except Exception as exc:
             if self._should_runtime_fallback_to_cpu(exc):
-                logger.warning("CUDA runtime failure detected. Retrying transcription on CPU.")
+                logger.warning(
+                    "CUDA runtime unavailable (%s). Falling back to CPU for transcription. "
+                    "Check CUDA/cuBLAS runtime installation (for example missing cublas64_12.dll) "
+                    "if GPU acceleration is expected.",
+                    type(exc).__name__,
+                )
                 self._fallback_model_to_cpu()
                 try:
                     segments, info = self._model.transcribe(audio, beam_size=TRANSCRIPTION_BEAM_SIZE)

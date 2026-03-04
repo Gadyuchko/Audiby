@@ -134,6 +134,7 @@ class ApplicationOrchestrator:
         self._text_queue: Queue = Queue()
         self._stop_event = threading.Event()
         self._recording_event = threading.Event()
+        self._audio_control_event = threading.Event()
         self._transcriber_thread: threading.Thread | None = None
         self._injector_thread: threading.Thread | None = None
         self._audio_thread: threading.Thread | None = None
@@ -168,6 +169,7 @@ class ApplicationOrchestrator:
         """Signal recording start - called by HotkeyManager on combo press."""
         logger.debug("Hotkey pressed - request recording start")
         self._recording_event.set()
+        self._audio_control_event.set()
 
     def on_hotkey_release(self) -> None:
         """Signal recording stop - called by HotkeyManager on combo release.
@@ -177,6 +179,7 @@ class ApplicationOrchestrator:
         """
         logger.debug("Hotkey released - request recording stop")
         self._recording_event.clear()
+        self._audio_control_event.set()
 
     def start(self) -> None:
         """Spawn worker threads and start the hotkey listener."""
@@ -201,6 +204,7 @@ class ApplicationOrchestrator:
         Safe to call multiple times (idempotent).
         """
         self._stop_event.set()
+        self._audio_control_event.set()
         self._hotkey_manager.stop()
         if self._audio_thread:
             self._audio_thread.join(timeout=2)
@@ -303,7 +307,8 @@ class ApplicationOrchestrator:
                         logger.error("Audio stop failed: %s - %s", type(e).__name__, e)
                         is_recording = False
 
-                self._stop_event.wait(timeout=self._QUEUE_POLL_TIMEOUT)
+                self._audio_control_event.wait(timeout=self._QUEUE_POLL_TIMEOUT)
+                self._audio_control_event.clear()
         finally:
             if is_recording:
                 try:
