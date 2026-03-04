@@ -102,10 +102,12 @@ class TestOrchestratorInit:
 
 class TestWorkerThreads:
     def test_start_creates_worker_threads(self, orchestrator):
-        """start() must spawn worker threads for transcriber and injector."""
+        """start() must spawn worker threads for audio, transcriber, and injector."""
         orchestrator.start()
         try:
             thread_names = [t.name for t in threading.enumerate()]
+            assert any("audio" in name.lower() for name in thread_names), \
+                f"No audio thread found in {thread_names}"
             assert any("transcriber" in name.lower() for name in thread_names), \
                 f"No transcriber thread found in {thread_names}"
             assert any("injector" in name.lower() for name in thread_names), \
@@ -144,11 +146,11 @@ class TestHotkeySignaling:
         orchestrator.on_hotkey_press()
         assert orchestrator.recording_event.is_set()
 
-    def test_on_hotkey_press_starts_recorder(self, orchestrator, patch_components):
-        """Pressing hotkey must call AudioRecorder.start()."""
+    def test_on_hotkey_press_does_not_start_recorder_directly(self, orchestrator, patch_components):
+        """Press callback should only set intent; audio worker starts recorder."""
         recorder_cls, _, _, _ = patch_components
         orchestrator.on_hotkey_press()
-        recorder_cls.return_value.start.assert_called_once()
+        recorder_cls.return_value.start.assert_not_called()
 
     def test_on_hotkey_release_clears_recording_event(self, orchestrator):
         """Releasing hotkey must clear recording_event."""
@@ -156,12 +158,12 @@ class TestHotkeySignaling:
         orchestrator.on_hotkey_release()
         assert not orchestrator.recording_event.is_set()
 
-    def test_on_hotkey_release_stops_recorder(self, orchestrator, patch_components):
-        """Releasing hotkey must call AudioRecorder.stop() to push audio to queue."""
+    def test_on_hotkey_release_does_not_stop_recorder_directly(self, orchestrator, patch_components):
+        """Release callback should only clear intent; audio worker stops recorder."""
         recorder_cls, _, _, _ = patch_components
         orchestrator.on_hotkey_press()
         orchestrator.on_hotkey_release()
-        recorder_cls.return_value.stop.assert_called_once()
+        recorder_cls.return_value.stop.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -172,17 +174,26 @@ class TestSequentialBursts:
     def test_multiple_press_release_cycles_are_independent(
         self, orchestrator, patch_components
     ):
-        """Each press/release cycle must trigger a fresh start/stop on recorder."""
+        """Each press/release cycle must trigger a fresh start/stop via audio worker."""
         recorder_cls, _, _, _ = patch_components
         mock_recorder = recorder_cls.return_value
+        orchestrator._QUEUE_POLL_TIMEOUT = 0.05
 
-        # First burst
-        orchestrator.on_hotkey_press()
-        orchestrator.on_hotkey_release()
+        orchestrator.start()
+        try:
+            # First burst
+            orchestrator.on_hotkey_press()
+            time.sleep(0.1)
+            orchestrator.on_hotkey_release()
+            time.sleep(0.1)
 
-        # Second burst
-        orchestrator.on_hotkey_press()
-        orchestrator.on_hotkey_release()
+            # Second burst
+            orchestrator.on_hotkey_press()
+            time.sleep(0.1)
+            orchestrator.on_hotkey_release()
+            time.sleep(0.1)
+        finally:
+            orchestrator.shutdown()
 
         assert mock_recorder.start.call_count == 2
         assert mock_recorder.stop.call_count == 2
@@ -201,19 +212,67 @@ class TestSequentialBursts:
 # ---------------------------------------------------------------------------
 
 class TestWorkerRecovery:
-    def test_audio_error_in_press_is_logged_not_fatal(
+    def test_audio_error_in_worker_is_logged_not_fatal(
         self, orchestrator, patch_components, caplog
     ):
-        """AudioError during hotkey press must be logged, not crash the orchestrator."""
+        """AudioError during worker start must be logged, not crash the orchestrator."""
         recorder_cls, _, _, _ = patch_components
         recorder_cls.return_value.start.side_effect = AudioError("device lost")
+        orchestrator._QUEUE_POLL_TIMEOUT = 0.05
 
         with caplog.at_level(logging.ERROR, logger="audiby.app"):
-            orchestrator.on_hotkey_press()
+            orchestrator.start()
+            try:
+                orchestrator.on_hotkey_press()
+                time.sleep(0.2)
+                orchestrator.on_hotkey_release()
+            finally:
+                orchestrator.shutdown()
 
         # Orchestrator must still be alive (not raised)
         assert any("device lost" in r.message or "AudioError" in r.message
                     for r in caplog.records)
+
+    def test_audio_start_failure_retries_then_recovers(
+        self, orchestrator, patch_components
+    ):
+        """Audio worker should retry start with backoff and recover on later success."""
+        recorder_cls, _, _, _ = patch_components
+        recorder_cls.return_value.start.side_effect = [AudioError("device lost"), None]
+        orchestrator._QUEUE_POLL_TIMEOUT = 0.02
+        orchestrator._backoff_initial = 0.01
+        orchestrator._backoff_max = 0.05
+
+        orchestrator.start()
+        try:
+            orchestrator.on_hotkey_press()
+            time.sleep(0.25)
+            orchestrator.on_hotkey_release()
+            time.sleep(0.1)
+        finally:
+            orchestrator.shutdown()
+
+        assert recorder_cls.return_value.start.call_count >= 2
+        assert recorder_cls.return_value.stop.call_count >= 1
+
+    def test_audio_start_failure_exceeds_max_attempts_sets_stop_event(
+        self, orchestrator, patch_components
+    ):
+        """Audio worker should stop pipeline after bounded retry exhaustion."""
+        recorder_cls, _, _, _ = patch_components
+        recorder_cls.return_value.start.side_effect = AudioError("device lost")
+        orchestrator._QUEUE_POLL_TIMEOUT = 0.02
+        orchestrator._backoff_initial = 0.01
+        orchestrator._backoff_max = 0.05
+        orchestrator._MAX_RECOVERY_ATTEMPTS = 1
+
+        orchestrator.start()
+        try:
+            orchestrator.on_hotkey_press()
+            time.sleep(0.2)
+            assert orchestrator.stop_event.is_set()
+        finally:
+            orchestrator.shutdown()
 
     def test_transcription_error_in_worker_is_logged_not_fatal(
         self, orchestrator, patch_components, caplog
@@ -254,6 +313,25 @@ class TestWorkerRecovery:
 
             # Orchestrator must still be running
             assert not orchestrator.stop_event.is_set()
+        finally:
+            orchestrator.shutdown()
+
+    def test_transcriber_failure_attempts_component_recovery(
+        self, mock_config, patch_components
+    ):
+        """On worker failure, orchestrator should recreate transcriber component."""
+        _, transcriber_cls, _, _ = patch_components
+        first = MagicMock()
+        second = MagicMock()
+        first.transcribe.side_effect = TranscriptionError("first instance failed")
+        transcriber_cls.side_effect = [first, second]
+
+        orchestrator = ApplicationOrchestrator(mock_config)
+        orchestrator.start()
+        try:
+            orchestrator.audio_queue.put(np.zeros(1600, dtype="float32"))
+            time.sleep(0.3)
+            assert transcriber_cls.call_count >= 2
         finally:
             orchestrator.shutdown()
 

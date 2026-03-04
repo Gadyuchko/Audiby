@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from audiby.exceptions import HotkeyError
 from audiby.platform.hotkey_manager import HotkeyManager
 
 
@@ -163,7 +164,7 @@ class TestErrorHandling:
         manager = HotkeyManager(hotkey="alt+z", on_press=on_press, on_release=on_release)
 
         with caplog.at_level(logging.ERROR, logger="audiby.platform.hotkey_manager"):
-            with pytest.raises(Exception):
+            with pytest.raises(HotkeyError):
                 manager.start()
 
         assert caplog.records

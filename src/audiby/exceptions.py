@@ -5,6 +5,7 @@ __all__ = [
     "AudioError",
     "TranscriptionError",
     "InjectionError",
+    "HotkeyError",
     "ModelError",
 ]
 
@@ -23,6 +24,10 @@ class TranscriptionError(AudibyError):
 
 class InjectionError(AudibyError):
     """Text injection error."""
+
+
+class HotkeyError(AudibyError):
+    """Global hotkey backend error."""
 
 
 class ModelError(AudibyError):

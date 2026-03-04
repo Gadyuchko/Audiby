@@ -10,6 +10,8 @@ from collections.abc import Callable
 
 from pynput.keyboard import Key, KeyCode, Listener
 
+from audiby.exceptions import HotkeyError
+
 logger = logging.getLogger(__name__)
 
 # Mapping from human-readable modifier names to pynput Key enums.
@@ -28,7 +30,6 @@ class HotkeyManager:
     The combo is detected by tracking currently held keys against a parsed
     hotkey set. No business logic — only signal forwarding.
 
-    @author Roman Hadiuchko
     """
 
     def __init__(self, hotkey: str, on_press: Callable, on_release: Callable) -> None:
@@ -57,7 +58,7 @@ class HotkeyManager:
         except Exception as e:
             logger.error("Failed to start hotkey listener: %s", e)
             self._listener = None
-            raise
+            raise HotkeyError("Failed to start hotkey listener") from e
 
     def stop(self) -> None:
         """Stop the key listener if running. Safe to call when not started."""

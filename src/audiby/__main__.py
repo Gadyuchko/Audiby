@@ -50,9 +50,10 @@ def main() -> int:
 
     print(f"{APP_NAME} v{_VERSION} - starting up...")
     config = Config()
-    run_app(config)
-    print(f"Config loaded from {config.config_dir}")
-    return 0
+    exit_code = run_app(config)
+    if exit_code == 0:
+        print(f"Config loaded from {config.config_dir}")
+    return exit_code
 
 
 if __name__ == "__main__":
