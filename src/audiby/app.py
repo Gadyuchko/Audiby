@@ -14,8 +14,10 @@ from typing import Tuple
 
 from audiby.config import Config
 from audiby.constants import (
+    CONFIG_KEY_ALT_NEUTRALIZATION,
     CONFIG_KEY_HOTKEY,
     CONFIG_KEY_MODEL,
+    DEFAULT_ALT_NEUTRALIZATION_STRATEGY,
     DEFAULT_HOTKEY,
     DEFAULT_MODEL_SIZE,
     LOG_BACKUP_COUNT,
@@ -138,6 +140,9 @@ class ApplicationOrchestrator:
 
         model_name = config.get(CONFIG_KEY_MODEL, DEFAULT_MODEL_SIZE)
         hotkey = config.get(CONFIG_KEY_HOTKEY, DEFAULT_HOTKEY)
+        alt_neutralization_strategy = config.get(
+            CONFIG_KEY_ALT_NEUTRALIZATION, DEFAULT_ALT_NEUTRALIZATION_STRATEGY
+        )
         model_path = model_manager.get_model_root() / model_name
         self._model_path = model_path
 
@@ -152,7 +157,11 @@ class ApplicationOrchestrator:
         # Orchestration parts instantiation
         self._recorder = AudioRecorder(self._audio_queue)
         self._transcriber = Transcriber(model_path, self._audio_queue, self._text_queue)
-        self._injector = TextInjector(self._text_queue)
+        self._injector = TextInjector(
+            self._text_queue,
+            alt_neutralization_strategy=alt_neutralization_strategy,
+            hotkey_uses_alt="alt" in hotkey.lower(),
+        )
         self._hotkey_manager = HotkeyManager(hotkey, self.on_hotkey_press, self.on_hotkey_release)
 
     def on_hotkey_press(self) -> None:

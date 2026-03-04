@@ -39,7 +39,13 @@ def make_injector():
     """
     contexts = []
 
-    def _factory(text_queue=None, clipboard_mod=None, controller=None):
+    def _factory(
+        text_queue=None,
+        clipboard_mod=None,
+        controller=None,
+        alt_neutralization_strategy=None,
+        hotkey_uses_alt=False,
+    ):
         tq = text_queue or queue.Queue()
         mock_cb = clipboard_mod or MagicMock()
         mock_ctrl = controller or MagicMock()
@@ -50,7 +56,10 @@ def make_injector():
         p_ctrl.start()
 
         from audiby.core.text_injector import TextInjector
-        injector = TextInjector(text_queue=tq)
+        kwargs = {"text_queue": tq, "hotkey_uses_alt": hotkey_uses_alt}
+        if alt_neutralization_strategy is not None:
+            kwargs["alt_neutralization_strategy"] = alt_neutralization_strategy
+        injector = TextInjector(**kwargs)
 
         contexts.append(_InjectorContext([p_clip, p_ctrl]))
         return injector, mock_cb, mock_ctrl
@@ -396,3 +405,57 @@ class TestSequentialInjections:
 
         # Clipboard should not have been touched
         mock_cb.backup.assert_not_called()
+
+
+class TestAltNeutralization:
+    """Alt-neutralization behavior before paste is configurable."""
+
+    def test_tap_alt_strategy_taps_alt_when_hotkey_uses_alt(self, make_injector):
+        """When hotkey uses Alt, tap_alt strategy should press/release alt_l before paste."""
+        tq = queue.Queue()
+        tq.put("inject")
+        mock_cb = MagicMock()
+        mock_cb.backup.return_value = "saved"
+        mock_ctrl = MagicMock()
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=None)
+        ctx.__exit__ = MagicMock(return_value=False)
+        mock_ctrl.pressed.return_value = ctx
+
+        injector, _, _ = make_injector(
+            text_queue=tq,
+            clipboard_mod=mock_cb,
+            controller=mock_ctrl,
+            alt_neutralization_strategy="tap_alt",
+            hotkey_uses_alt=True,
+        )
+        injector.inject()
+
+        from pynput.keyboard import Key
+        release_keys = [c.args[0] for c in mock_ctrl.release.call_args_list]
+        assert Key.alt_l in release_keys
+        assert any(c.args and c.args[0] == Key.alt_l for c in mock_ctrl.press.call_args_list)
+
+    def test_none_strategy_does_not_tap_alt(self, make_injector):
+        """none strategy should avoid alt tap even if hotkey uses Alt."""
+        tq = queue.Queue()
+        tq.put("inject")
+        mock_cb = MagicMock()
+        mock_cb.backup.return_value = "saved"
+        mock_ctrl = MagicMock()
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=None)
+        ctx.__exit__ = MagicMock(return_value=False)
+        mock_ctrl.pressed.return_value = ctx
+
+        injector, _, _ = make_injector(
+            text_queue=tq,
+            clipboard_mod=mock_cb,
+            controller=mock_ctrl,
+            alt_neutralization_strategy="none",
+            hotkey_uses_alt=True,
+        )
+        injector.inject()
+
+        from pynput.keyboard import Key
+        assert not any(c.args and c.args[0] == Key.alt_l for c in mock_ctrl.press.call_args_list)

@@ -9,12 +9,18 @@ CONFIG_KEY_HOTKEY = "push_to_talk_key"
 CONFIG_KEY_AUDIO_DEVICE = "audio_device_id"
 CONFIG_KEY_MODEL = "model_size"
 CONFIG_KEY_AUTOSTART = "start_on_boot"
+CONFIG_KEY_ALT_NEUTRALIZATION = "alt_neutralization_strategy"
 
 # Default values
 DEFAULT_HOTKEY = "alt+z"
 DEFAULT_MODEL_SIZE = "base"
 DEFAULT_AUDIO_DEVICE = None
 DEFAULT_AUTOSTART = False
+DEFAULT_ALT_NEUTRALIZATION_STRATEGY = "tap_alt"
+
+ALT_NEUTRALIZATION_NONE = "none"
+ALT_NEUTRALIZATION_TAP_ALT = "tap_alt"
+ALT_NEUTRALIZATION_ESC = "esc"
 
 # Audio constants
 DEFAULT_SAMPLE_RATE = 16000
