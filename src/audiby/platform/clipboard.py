@@ -1,33 +1,64 @@
-"""Clipboard adapter for copy and paste integration with previous clipboard state preservation.
-The decision to use os clipboard as a text injection method resulted in the use of external libraries WinDLL user32 and kernel32,
-because pyperclip only does copy()/paste() and we need backup and restore functionality to preserve user data on paste.
+"""Clipboard adapter for copy/paste with backup/restore using Win32 APIs."""
 
-"""
-
-import logging
 import ctypes
+import logging
+import time
+from ctypes import wintypes
+
 from audiby.constants import CF_UNICODETEXT
 from audiby.constants import GMEM_MOVEABLE
-
-OpenClipboard = ctypes.windll.user32.OpenClipboard
-EmptyClipboard = ctypes.windll.user32.EmptyClipboard
-GetClipboardData = ctypes.windll.user32.GetClipboardData
-SetClipboardData = ctypes.windll.user32.SetClipboardData
-CloseClipboard = ctypes.windll.user32.CloseClipboard
-
-GlobalAlloc = ctypes.windll.kernel32.GlobalAlloc
-GlobalLock = ctypes.windll.kernel32.GlobalLock
-GlobalUnlock = ctypes.windll.kernel32.GlobalUnlock
-GlobalFree = ctypes.windll.kernel32.GlobalFree
 
 from audiby.exceptions import InjectionError
 
 logger = logging.getLogger(__name__)
 
+_CLIPBOARD_OPEN_RETRIES = 10
+_CLIPBOARD_OPEN_DELAY_SEC = 0.01
+
+# Configure explicit Win32 signatures to avoid 64-bit handle/pointer truncation.
+_user32 = ctypes.WinDLL("user32", use_last_error=True)
+_kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+OpenClipboard = _user32.OpenClipboard
+OpenClipboard.argtypes = [wintypes.HWND]
+OpenClipboard.restype = wintypes.BOOL
+
+EmptyClipboard = _user32.EmptyClipboard
+EmptyClipboard.argtypes = []
+EmptyClipboard.restype = wintypes.BOOL
+
+GetClipboardData = _user32.GetClipboardData
+GetClipboardData.argtypes = [wintypes.UINT]
+GetClipboardData.restype = wintypes.HANDLE
+
+SetClipboardData = _user32.SetClipboardData
+SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+SetClipboardData.restype = wintypes.HANDLE
+
+CloseClipboard = _user32.CloseClipboard
+CloseClipboard.argtypes = []
+CloseClipboard.restype = wintypes.BOOL
+
+GlobalAlloc = _kernel32.GlobalAlloc
+GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+GlobalAlloc.restype = wintypes.HGLOBAL
+
+GlobalLock = _kernel32.GlobalLock
+GlobalLock.argtypes = [wintypes.HGLOBAL]
+GlobalLock.restype = wintypes.LPVOID
+
+GlobalUnlock = _kernel32.GlobalUnlock
+GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+GlobalUnlock.restype = wintypes.BOOL
+
+GlobalFree = _kernel32.GlobalFree
+GlobalFree.argtypes = [wintypes.HGLOBAL]
+GlobalFree.restype = wintypes.HGLOBAL
+
+
 def get_text() -> str | None:
     """Opens clipboard and returns its contents as a string or null if the clipboard is empty. Safely closes clipboard."""
-    if not OpenClipboard(None):
-        raise InjectionError("Failed to open clipboard")
+    _open_clipboard_with_retry()
     try:
         # get memory pointer to clipboard data
         handle = GetClipboardData(CF_UNICODETEXT)
@@ -43,17 +74,17 @@ def get_text() -> str | None:
         finally:
             GlobalUnlock(handle)
     except Exception as e:
-        logger.error(f"Error while reading clipboard: {e}")
+        logger.error("Error while reading clipboard: %s", e)
         raise InjectionError("Error while reading clipboard") from e
     finally:
         CloseClipboard()
 
 def set_text(text: str) -> None:
     """Opens clipboard and writes the given text to it. Safely closes clipboard."""
-    if not OpenClipboard(None):
-        raise InjectionError("Failed to open clipboard")
+    _open_clipboard_with_retry()
     try:
-        EmptyClipboard()
+        if not EmptyClipboard():
+            raise InjectionError("Failed to empty clipboard")
         buffer_size = (len(text) +1 ) * ctypes.sizeof(ctypes.c_wchar)
         # id of mem block
         handle = GlobalAlloc(GMEM_MOVEABLE, buffer_size)
@@ -77,10 +108,11 @@ def set_text(text: str) -> None:
         if not SetClipboardData(CF_UNICODETEXT, handle):
             GlobalFree(handle)
             raise InjectionError("Failed to set clipboard data")
+        logger.debug("Clipboard set successfully (text length: %d)", len(text))
     except InjectionError:
         raise
     except Exception as e:
-        logger.error(f"Error while writing clipboard: {e}")
+        logger.error("Error while writing clipboard: %s", e)
         raise InjectionError("Error while writing clipboard") from e
     finally:
         CloseClipboard()
@@ -93,15 +125,25 @@ def restore(backup: str | None) -> None:
         set_text(backup)
     else:
         try:
-            if not OpenClipboard(None):
-                raise InjectionError("Failed to open clipboard")
-            EmptyClipboard()
+            _open_clipboard_with_retry()
+            if not EmptyClipboard():
+                raise InjectionError("Failed to empty clipboard")
+            logger.debug("Clipboard restored to empty state")
         except InjectionError:
             raise
         except Exception as e:
-            logger.error(f"Error while restoring clipboard: {e}")
+            logger.error("Error while restoring clipboard: %s", e)
             raise InjectionError("Error while restoring clipboard") from e
         finally:
             CloseClipboard()
+
+
+def _open_clipboard_with_retry() -> None:
+    """Open clipboard with short retries to tolerate transient lock contention."""
+    for _ in range(_CLIPBOARD_OPEN_RETRIES):
+        if OpenClipboard(None):
+            return
+        time.sleep(_CLIPBOARD_OPEN_DELAY_SEC)
+    raise InjectionError("Failed to open clipboard")
 
 

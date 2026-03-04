@@ -31,6 +31,7 @@ class TextInjector:
         except Empty:
             return
 
+        logger.debug("Injection attempt started (text length: %d)", len(text))
         try:
             backup_text = clipboard.backup()
             backup_captured = True
@@ -39,6 +40,7 @@ class TextInjector:
                 self._keyboard.press("v")
                 self._keyboard.release("v")
             time.sleep(INJECTION_PASTE_DELAY)
+            logger.info("Injection key sequence sent (text length: %d)", len(text))
 
         except InjectionError:
             logger.error("Text injection failed")

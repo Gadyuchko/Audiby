@@ -33,6 +33,9 @@ class Transcriber:
         text_queue: Queue,
         device_mode: str = TRANSCRIPTION_DEVICE_AUTO,
     ) -> None:
+        self._model_path = Path(model_path)
+        self._device_mode = device_mode
+        self._runtime_cpu_fallback_attempted = False
         device, compute_type = self._resolve_device_config(device_mode)
         try:
             self._model = WhisperModel(str(model_path), device=device, compute_type=compute_type)
@@ -69,13 +72,41 @@ class Transcriber:
         except TranscriptionError:
             raise
         except Exception as exc:
-            logger.error("Transcription failed: %s", type(exc).__name__)
-            raise TranscriptionError(f"Transcription failed: {exc}") from exc
+            if self._should_runtime_fallback_to_cpu(exc):
+                logger.warning("CUDA runtime failure detected. Retrying transcription on CPU.")
+                self._fallback_model_to_cpu()
+                try:
+                    segments, info = self._model.transcribe(audio, beam_size=TRANSCRIPTION_BEAM_SIZE)
+                    raw = "".join(seg.text for seg in segments)
+                except Exception as retry_exc:
+                    logger.error("Transcription failed after CPU fallback: %s", type(retry_exc).__name__)
+                    raise TranscriptionError(f"Transcription failed: {retry_exc}") from retry_exc
+            else:
+                logger.error("Transcription failed: %s", type(exc).__name__)
+                raise TranscriptionError(f"Transcription failed: {exc}") from exc
 
         text = " ".join(raw.split())
         if text:
             self._text_queue.put(text)
         logger.info("Transcription completed, text length: %d", len(text))
+
+    def _fallback_model_to_cpu(self) -> None:
+        """Switch model instance to CPU once after CUDA runtime failure in auto mode."""
+        try:
+            self._model = WhisperModel(str(self._model_path), device="cpu", compute_type="int8")
+            self._runtime_cpu_fallback_attempted = True
+            logger.info("Runtime fallback to CPU model succeeded")
+        except Exception as exc:
+            raise TranscriptionError(f"CPU fallback failed: {exc}") from exc
+
+    def _should_runtime_fallback_to_cpu(self, exc: Exception) -> bool:
+        """Return True if this looks like CUDA runtime missing-library failure in auto mode."""
+        if self._device_mode != TRANSCRIPTION_DEVICE_AUTO:
+            return False
+        if self._runtime_cpu_fallback_attempted:
+            return False
+        message = str(exc).lower()
+        return any(token in message for token in ("cublas", "cudnn", "cuda"))
 
     @staticmethod
     def _resolve_device_config(device_mode: str) -> tuple[str, str]:

@@ -318,6 +318,36 @@ class TestTranscriptionErrorHandling:
                 t.transcribe(_make_audio())
             assert exc_info.value.__cause__ is original
 
+    def test_runtime_cuda_dll_failure_falls_back_to_cpu_and_recovers(self):
+        """Auto mode should recover on cublas DLL runtime failure by switching to CPU once."""
+        with patch("audiby.core.transcriber.WhisperModel") as mock_cls, \
+             patch("audiby.core.transcriber.ctranslate2") as mock_ct2:
+            mock_ct2.get_cuda_device_count.return_value = 1
+
+            cuda_model = MagicMock()
+            cuda_model.transcribe.side_effect = RuntimeError(
+                "Library cublas64_12.dll is not found or cannot be loaded"
+            )
+            cpu_model = MagicMock()
+            cpu_model.transcribe.return_value = (iter([_make_segment(" recovered")]), None)
+            mock_cls.side_effect = [cuda_model, cpu_model]
+            from audiby.core.transcriber import Transcriber
+
+            text_q = queue.Queue()
+            t = Transcriber(
+                audio_queue=queue.Queue(),
+                text_queue=text_q,
+                model_path="/fake/model",
+                device_mode="auto",
+            )
+
+            t.transcribe(_make_audio())
+
+            assert mock_cls.call_count == 2
+            _, fallback_kwargs = mock_cls.call_args
+            assert fallback_kwargs["device"] == "cpu"
+            assert text_q.get_nowait() == "recovered"
+
     def test_model_load_failure_wrapped_as_model_error(self):
         """Exception during WhisperModel() init must raise ModelError."""
         with patch("audiby.core.transcriber.WhisperModel") as mock_cls, \

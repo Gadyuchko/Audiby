@@ -21,7 +21,7 @@ DEFAULT_SAMPLE_RATE = 16000
 
 # Logging constants
 LOG_FORMAT = "[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s"
-LOG_LEVEL = "INFO"
+LOG_LEVEL = "DEBUG"
 LOG_FILENAME = "audiby.log"
 LOG_MAX_BYTES = 1_048_576
 LOG_BACKUP_COUNT = 5
