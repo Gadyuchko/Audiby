@@ -12,7 +12,7 @@ CONFIG_KEY_AUTOSTART = "start_on_boot"
 CONFIG_KEY_ALT_NEUTRALIZATION = "alt_neutralization_strategy"
 
 # Default values
-DEFAULT_HOTKEY = "alt+z"
+DEFAULT_HOTKEY = "ctrl+space"
 DEFAULT_MODEL_SIZE = "base"
 DEFAULT_AUDIO_DEVICE = None
 DEFAULT_AUTOSTART = False
