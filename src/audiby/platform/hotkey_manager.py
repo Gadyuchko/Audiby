@@ -1,48 +1,26 @@
-"""Global hotkey abstraction — wraps pynput Listener for push-to-talk combo detection.
+"""Global hotkey abstraction - wraps pynput Listener for push-to-talk combo detection.
 
 Translates OS-level key events into press/release callbacks for a configured
-key combination. Platform-only module — contains no pipeline or business logic.
-
+key combination. Platform-only module - contains no pipeline or business logic.
 """
 
 import logging
 from collections.abc import Callable
 
-from pynput.keyboard import Key, KeyCode, Listener
+from pynput.keyboard import HotKey, Key, KeyCode, Listener
 
 from audiby.exceptions import HotkeyError
 
 logger = logging.getLogger(__name__)
 
-# Mapping from human-readable modifier names to pynput Key enums.
-_MODIFIER_MAP: dict[str, Key] = {
-    "alt": Key.alt_l,
-    "ctrl": Key.ctrl_l,
-    "shift": Key.shift_l,
-}
-
-
 class HotkeyManager:
-    """Listens for a global key combo and forwards press/release signals.
-
-    Uses pynput keyboard Listener to listen to combined presses and calls
-    the specified callback on press and release.
-    The combo is detected by tracking currently held keys against a parsed
-    hotkey set. No business logic — only signal forwarding.
-
-    """
+    """Listens for a global key combo and forwards press/release signals."""
 
     def __init__(self, hotkey: str, on_press: Callable, on_release: Callable) -> None:
-        """Configure the hotkey combo and store callbacks.
-
-        Args:
-            hotkey: Key combination string, e.g. ``"alt+z"`` or ``"<ctrl>+a"``.
-            on_press: Called once when the full combo is held down.
-            on_release: Called once when any combo key is released.
-        """
+        """Configure the hotkey combo and store callbacks."""
         if not hotkey:
             raise ValueError("Hotkey must be specified")
-        self._hotkey_set = self._parse_hotkey(hotkey)
+        self._hotkey_set = {self._normalize_key(key) for key in self._parse_hotkey(hotkey)}
         self._on_press = on_press
         self._on_release = on_release
         self._listener: Listener | None = None
@@ -67,42 +45,79 @@ class HotkeyManager:
             self._listener = None
 
     def _on_key_press(self, key) -> None:
-        """We check if pressed key in configured combo, add it to pressed set and fire on_press callback in case set is equal to combo.
-        """
+        """Track combo state and fire on_press when full combo is held."""
+        key = self._normalize_key(key)
         if key in self._hotkey_set:
             self._pressed.add(key)
         if self._hotkey_set == self._pressed and not self._combo_active:
             self._combo_active = True
-            logger.debug("Combo activated — firing press callback")
+            logger.debug("Combo activated - firing press callback")
             self._on_press()
 
     def _on_key_release(self, key) -> None:
-        """We check if released key is part of configured combo, remove it from pressed set and fire on_release callback in this case"""
+        """Track combo release and fire on_release when combo breaks."""
+        key = self._normalize_key(key)
         if self._combo_active and key in self._hotkey_set:
             self._combo_active = False
-            logger.debug("Combo deactivated — firing release callback")
+            logger.debug("Combo deactivated - firing release callback")
             self._on_release()
         self._pressed.discard(key)
 
     @staticmethod
     def _parse_hotkey(hotkey: str) -> set:
-        """Convert a hotkey string into a set of pynput key objects.
-
-        Supports modifier names (alt, ctrl, shift) with optional angle brackets
-        and single-character keys joined by ``+``.
-
-        Examples::
-
-            "alt+z"     → {Key.alt_l, KeyCode(char='z')}
-            "<ctrl>+a"  → {Key.ctrl_l, KeyCode(char='a')}
-        """
-        keys: set = set()
+        """Convert a hotkey string into a normalized set of pynput key objects."""
+        normalized_parts = []
         for part in hotkey.split("+"):
-            part = part.strip().lower().strip("<>")  # "alt+z" → "alt", "<alt>+z" → "alt"
-            if part in _MODIFIER_MAP:
-                keys.add(_MODIFIER_MAP[part])
-            elif len(part) == 1:
-                keys.add(KeyCode.from_char(part))
-            else:
-                raise ValueError(f"Unknown hotkey component: '{part}'")
-        return keys
+            token = part.strip().lower().strip("<>")
+            if not token:
+                continue
+            normalized_parts.append(f"<{token}>" if len(token) > 1 else token)
+        if not normalized_parts:
+            raise ValueError("Hotkey must contain at least one key")
+
+        parsed = HotKey.parse("+".join(normalized_parts))
+        return set(parsed)
+
+    def _normalize_key(self, key):
+        """Convert different key representations into one consistent form.
+
+        Why this exists:
+        - Windows/pynput can report the same physical key in different ways
+          (for example ctrl vs ctrl_l vs ctrl_r, or VK codes).
+        - We want hotkey matching to be stable and predictable.
+        """
+        # Treat left/right modifier variants as the same key.
+        if key in (Key.ctrl, Key.ctrl_l, Key.ctrl_r):
+            return Key.ctrl
+        if key in (Key.alt, Key.alt_l, Key.alt_r):
+            return Key.alt
+        if key in (Key.shift, Key.shift_l, Key.shift_r):
+            return Key.shift
+
+        # Some special keys come as enum values with a Windows VK code.
+        if isinstance(key, Key):
+            vk = getattr(key.value, "vk", None)
+            if vk is not None:
+                return KeyCode.from_vk(vk)
+            return key
+
+        # Letter keys may come as chars. Normalize to lowercase.
+        # Ctrl+letter can come as control chars (\x01..\x1a), so map them back to a..z.
+        if isinstance(key, KeyCode) and key.char:
+            codepoint = ord(key.char)
+            if 1 <= codepoint <= 26:
+                # 1->a, 2->b, ..., 26->z
+                return KeyCode.from_char(chr(codepoint + 96))
+            return KeyCode.from_char(key.char.lower())
+
+        # VK codes for modifiers can also show up as KeyCode values.
+        # Collapse those to generic ctrl/alt/shift as well.
+        if isinstance(key, KeyCode) and key.vk is not None:
+            if key.vk in (162, 163):
+                return Key.ctrl
+            if key.vk in (164, 165):
+                return Key.alt
+            if key.vk in (160, 161):
+                return Key.shift
+            return KeyCode.from_vk(key.vk)
+        return key

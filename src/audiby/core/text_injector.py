@@ -49,7 +49,7 @@ class TextInjector:
             backup_captured = True
             clipboard.set_text(text)
             self._neutralize_modifiers_if_needed()
-            with self._keyboard.pressed(Key.ctrl):
+            with self._keyboard.pressed(Key.ctrl_l):
                 self._keyboard.press("v")
                 self._keyboard.release("v")
             time.sleep(INJECTION_PASTE_DELAY)
