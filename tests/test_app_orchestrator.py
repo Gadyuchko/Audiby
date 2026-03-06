@@ -41,7 +41,7 @@ def patch_components(mocker):
     recorder_cls = mocker.patch("audiby.app.AudioRecorder")
     transcriber_cls = mocker.patch("audiby.app.Transcriber")
     injector_cls = mocker.patch("audiby.app.TextInjector")
-    hotkey_cls = mocker.patch("audiby.app.HotkeyManager")
+    hotkey_cls = mocker.patch("audiby.app.get_hotkey_manager")
     mocker.patch("audiby.app.model_manager")
     return recorder_cls, transcriber_cls, injector_cls, hotkey_cls
 

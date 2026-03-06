@@ -15,7 +15,7 @@ class ClipboardBase(ABC):
 
 
 def get_clipboard() -> ClipboardBase:
-    """Return a ClipboardBase instance for the current platform.
+    """Factory method: Returns a ClipboardBase instance for the current platform.
     Will be called to determine implementation based on a platform.
     """
     if sys.platform == "win32":

@@ -31,7 +31,7 @@ from audiby.core import model_manager
 from audiby.core.audio_recorder import AudioRecorder
 from audiby.core.text_injector import TextInjector
 from audiby.core.transcriber import Transcriber
-from audiby.platform.hotkey_manager import HotkeyManager
+from audiby.platform.hotkey_manager import get_hotkey_manager
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +163,7 @@ class ApplicationOrchestrator:
             alt_neutralization_strategy=alt_neutralization_strategy,
             hotkey_uses_alt="alt" in hotkey.lower(),
         )
-        self._hotkey_manager = HotkeyManager(hotkey, self.on_hotkey_press, self.on_hotkey_release)
+        self._hotkey_manager = get_hotkey_manager(hotkey, self.on_hotkey_press, self.on_hotkey_release)
 
     def on_hotkey_press(self) -> None:
         """Signal recording start - called by HotkeyManager on combo press."""

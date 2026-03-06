@@ -13,7 +13,7 @@ def test_package_import_smoke() -> None:
 
 def test_main_prints_startup_message(capsys, monkeypatch) -> None:
     """Entry point prints startup messages and exits cleanly."""
-    monkeypatch.setattr(__main__, "run_app", lambda _config: None)
+    monkeypatch.setattr(__main__, "run_app", lambda _config: 0)
     exit_code = __main__.main()
     captured = capsys.readouterr()
 

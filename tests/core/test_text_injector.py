@@ -50,9 +50,9 @@ def make_injector():
         mock_cb = clipboard_mod or MagicMock()
         mock_ctrl = controller or MagicMock()
 
-        p_clip = patch(f"{_P}.clipboard", mock_cb)
+        p_clip_factory = patch(f"{_P}.get_clipboard", return_value=mock_cb)
         p_ctrl = patch(f"{_P}.Controller", return_value=mock_ctrl)
-        p_clip.start()
+        get_clipboard_mock = p_clip_factory.start()
         p_ctrl.start()
 
         from audiby.core.text_injector import TextInjector
@@ -61,8 +61,8 @@ def make_injector():
             kwargs["alt_neutralization_strategy"] = alt_neutralization_strategy
         injector = TextInjector(**kwargs)
 
-        contexts.append(_InjectorContext([p_clip, p_ctrl]))
-        return injector, mock_cb, mock_ctrl
+        contexts.append(_InjectorContext([p_clip_factory, p_ctrl]))
+        return injector, mock_cb, mock_ctrl, get_clipboard_mock
 
     yield _factory
 
@@ -85,9 +85,10 @@ class TestTextInjectorHappyPath:
         mock_cb = MagicMock()
         mock_cb.backup.return_value = "original"
 
-        injector, _, _ = make_injector(text_queue=tq, clipboard_mod=mock_cb)
+        injector, _, _, p_clip_factory = make_injector(text_queue=tq, clipboard_mod=mock_cb)
         injector.inject()
 
+        p_clip_factory.assert_called_once()
         mock_cb.backup.assert_called_once()
         mock_cb.set_text.assert_called_once_with("hello world")
         mock_cb.restore.assert_called_once_with("original")
@@ -100,7 +101,7 @@ class TestTextInjectorHappyPath:
         mock_cb = MagicMock()
         mock_cb.backup.return_value = "old"
 
-        injector, _, mock_ctrl = make_injector(text_queue=tq, clipboard_mod=mock_cb)
+        injector, _, mock_ctrl, _ = make_injector(text_queue=tq, clipboard_mod=mock_cb)
         injector.inject()
 
         # Controller must have used pressed(Key.ctrl) context manager
@@ -124,7 +125,7 @@ class TestTextInjectorHappyPath:
         ctx.__exit__ = MagicMock(return_value=False)
         mock_ctrl.pressed.return_value = ctx
 
-        injector, _, _ = make_injector(
+        injector, _, _, _ = make_injector(
             text_queue=tq, clipboard_mod=mock_cb, controller=mock_ctrl,
         )
         injector.inject()
@@ -139,7 +140,7 @@ class TestTextInjectorHappyPath:
         mock_cb = MagicMock()
         mock_cb.backup.return_value = "old"
 
-        injector, _, _ = make_injector(text_queue=tq, clipboard_mod=mock_cb)
+        injector, _, _, _ = make_injector(text_queue=tq, clipboard_mod=mock_cb)
         # Must not raise
         injector.inject()
 
@@ -160,7 +161,7 @@ class TestClipboardRestoreGuarantee:
         mock_cb.backup.return_value = "saved"
         mock_cb.set_text.side_effect = InjectionError("clipboard write failed")
 
-        injector, _, _ = make_injector(text_queue=tq, clipboard_mod=mock_cb)
+        injector, _, _, _ = make_injector(text_queue=tq, clipboard_mod=mock_cb)
 
         with pytest.raises(InjectionError):
             injector.inject()
@@ -181,7 +182,7 @@ class TestClipboardRestoreGuarantee:
         ctx.__exit__ = MagicMock(return_value=False)
         mock_ctrl.pressed.return_value = ctx
 
-        injector, _, _ = make_injector(
+        injector, _, _, _ = make_injector(
             text_queue=tq, clipboard_mod=mock_cb, controller=mock_ctrl,
         )
 
@@ -199,7 +200,7 @@ class TestClipboardRestoreGuarantee:
         mock_cb.backup.return_value = None
         mock_cb.set_text.side_effect = InjectionError("fail")
 
-        injector, _, _ = make_injector(text_queue=tq, clipboard_mod=mock_cb)
+        injector, _, _, _ = make_injector(text_queue=tq, clipboard_mod=mock_cb)
 
         with pytest.raises(InjectionError):
             injector.inject()
@@ -222,7 +223,7 @@ class TestInjectionErrorHandling:
         mock_cb = MagicMock()
         mock_cb.backup.side_effect = InjectionError("open failed")
 
-        injector, _, _ = make_injector(text_queue=tq, clipboard_mod=mock_cb)
+        injector, _, _, _ = make_injector(text_queue=tq, clipboard_mod=mock_cb)
 
         with pytest.raises(InjectionError):
             injector.inject()
@@ -241,7 +242,7 @@ class TestInjectionErrorHandling:
         ctx.__exit__ = MagicMock(return_value=False)
         mock_ctrl.pressed.return_value = ctx
 
-        injector, _, _ = make_injector(
+        injector, _, _, _ = make_injector(
             text_queue=tq, clipboard_mod=mock_cb, controller=mock_ctrl,
         )
 
@@ -264,7 +265,7 @@ class TestInjectionErrorHandling:
             "saved",
         ]
 
-        injector, _, _ = make_injector(text_queue=tq, clipboard_mod=mock_cb)
+        injector, _, _, _ = make_injector(text_queue=tq, clipboard_mod=mock_cb)
 
         # First call fails
         with pytest.raises(InjectionError):
@@ -293,7 +294,7 @@ class TestPrivacyGuardrail:
         mock_cb = MagicMock()
         mock_cb.backup.return_value = "old"
 
-        injector, _, _ = make_injector(text_queue=tq, clipboard_mod=mock_cb)
+        injector, _, _, _ = make_injector(text_queue=tq, clipboard_mod=mock_cb)
 
         with caplog.at_level(logging.DEBUG, logger="audiby.core.text_injector"):
             injector.inject()
@@ -312,7 +313,7 @@ class TestPrivacyGuardrail:
         mock_cb.backup.return_value = "old"
         mock_cb.set_text.side_effect = InjectionError("write failed")
 
-        injector, _, _ = make_injector(text_queue=tq, clipboard_mod=mock_cb)
+        injector, _, _, _ = make_injector(text_queue=tq, clipboard_mod=mock_cb)
 
         with caplog.at_level(logging.DEBUG, logger="audiby.core.text_injector"):
             with pytest.raises(InjectionError):
@@ -330,7 +331,7 @@ class TestPrivacyGuardrail:
         mock_cb = MagicMock()
         mock_cb.backup.return_value = "old"
 
-        injector, _, _ = make_injector(text_queue=tq, clipboard_mod=mock_cb)
+        injector, _, _, _ = make_injector(text_queue=tq, clipboard_mod=mock_cb)
 
         with caplog.at_level(logging.DEBUG, logger="audiby.core.text_injector"):
             injector.inject()
@@ -355,7 +356,7 @@ class TestSequentialInjections:
         mock_cb = MagicMock()
         mock_cb.backup.return_value = "saved"
 
-        injector, _, _ = make_injector(text_queue=tq, clipboard_mod=mock_cb)
+        injector, _, _, _ = make_injector(text_queue=tq, clipboard_mod=mock_cb)
 
         injector.inject()
         injector.inject()
@@ -382,7 +383,7 @@ class TestSequentialInjections:
             None,
         ]
 
-        injector, _, _ = make_injector(text_queue=tq, clipboard_mod=mock_cb)
+        injector, _, _, _ = make_injector(text_queue=tq, clipboard_mod=mock_cb)
 
         with pytest.raises(InjectionError):
             injector.inject()
@@ -398,7 +399,7 @@ class TestSequentialInjections:
         tq = queue.Queue()
 
         mock_cb = MagicMock()
-        injector, _, _ = make_injector(text_queue=tq, clipboard_mod=mock_cb)
+        injector, _, _, _ = make_injector(text_queue=tq, clipboard_mod=mock_cb)
 
         # Must not raise
         injector.inject()
@@ -422,7 +423,7 @@ class TestAltNeutralization:
         ctx.__exit__ = MagicMock(return_value=False)
         mock_ctrl.pressed.return_value = ctx
 
-        injector, _, _ = make_injector(
+        injector, _, _, _ = make_injector(
             text_queue=tq,
             clipboard_mod=mock_cb,
             controller=mock_ctrl,
@@ -448,7 +449,7 @@ class TestAltNeutralization:
         ctx.__exit__ = MagicMock(return_value=False)
         mock_ctrl.pressed.return_value = ctx
 
-        injector, _, _ = make_injector(
+        injector, _, _, _ = make_injector(
             text_queue=tq,
             clipboard_mod=mock_cb,
             controller=mock_ctrl,
