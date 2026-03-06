@@ -45,5 +45,3 @@ TRANSCRIPTION_DEVICE_CPU = "cpu"
 
 # Injection and clipboard constants
 INJECTION_PASTE_DELAY = 0.1
-CF_UNICODETEXT = 13  # The clipboard format identifier for UTF-16 text (Win).
-GMEM_MOVEABLE = 0x0002  # Memory block pointer flag defined by Win32 API.
