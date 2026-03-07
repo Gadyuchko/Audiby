@@ -1,5 +1,6 @@
 """Tests for clipboard factory dispatch and Windows backend behavior."""
 
+import subprocess
 from unittest.mock import patch
 
 import pytest
@@ -117,3 +118,62 @@ def test_windows_set_text_failure_raises_injection_error(win32):
 
     with pytest.raises(InjectionError):
         cb.set_text("test")
+
+
+# ---------------------------------------------------------------------------
+# MacClipboard behavioral tests
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def mac_cb():
+    """Create a MacClipboard with subprocess mocked."""
+    with patch("audiby.platform._clipboard_mac.subprocess") as m_sub:
+        yield MacClipboard(), m_sub
+
+
+def test_mac_get_text_reads_clipboard(mac_cb):
+    cb, m_sub = mac_cb
+    m_sub.run.return_value.stdout = "hello"
+    m_sub.CalledProcessError = subprocess.CalledProcessError
+
+    assert cb.get_text() == "hello"
+    m_sub.run.assert_called_once_with(["pbpaste"], capture_output=True, text=True, check=True)
+
+
+def test_mac_get_text_returns_none_for_empty(mac_cb):
+    cb, m_sub = mac_cb
+    m_sub.run.return_value.stdout = ""
+    m_sub.CalledProcessError = subprocess.CalledProcessError
+
+    assert cb.get_text() is None
+
+
+def test_mac_set_text_writes_clipboard(mac_cb):
+    cb, m_sub = mac_cb
+    m_sub.CalledProcessError = subprocess.CalledProcessError
+
+    cb.set_text("hello")
+
+    m_sub.run.assert_called_once_with(["pbcopy"], input="hello", text=True, check=True)
+
+
+def test_mac_backup_restore_round_trip(mac_cb):
+    cb, m_sub = mac_cb
+    m_sub.run.return_value.stdout = "orig"
+    m_sub.CalledProcessError = subprocess.CalledProcessError
+
+    saved = cb.backup()
+    cb.set_text("new")
+    cb.restore(saved)
+
+    assert saved == "orig"
+    assert m_sub.run.call_count == 3
+
+
+def test_mac_get_text_failure_raises_injection_error(mac_cb):
+    cb, m_sub = mac_cb
+    m_sub.run.side_effect = subprocess.CalledProcessError(1, "pbpaste", stderr="fail")
+    m_sub.CalledProcessError = subprocess.CalledProcessError
+
+    with pytest.raises(InjectionError):
+        cb.get_text()

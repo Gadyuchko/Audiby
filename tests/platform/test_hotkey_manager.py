@@ -42,7 +42,7 @@ def test_factory_raises_on_unsupported_platform(monkeypatch, callbacks):
 
 
 def test_windows_start_creates_listener(mocker, callbacks):
-    listener_cls = mocker.patch("audiby.platform._hotkey_win.Listener")
+    listener_cls = mocker.patch("audiby.platform.hotkey_manager.Listener")
     listener_instance = listener_cls.return_value
     on_press, on_release = callbacks
     manager = WindowsHotkeyManager("alt+z", on_press, on_release)
@@ -54,7 +54,7 @@ def test_windows_start_creates_listener(mocker, callbacks):
 
 
 def test_windows_start_wraps_listener_failure(mocker, callbacks):
-    listener_cls = mocker.patch("audiby.platform._hotkey_win.Listener")
+    listener_cls = mocker.patch("audiby.platform.hotkey_manager.Listener")
     listener_cls.return_value.start.side_effect = RuntimeError("boom")
     on_press, on_release = callbacks
     manager = WindowsHotkeyManager("alt+z", on_press, on_release)
@@ -86,6 +86,18 @@ def test_windows_vk_normalization_kept():
     assert manager._normalize_key(KeyCode.from_vk(160)) == Key.shift
 
 
+def test_mac_start_creates_listener(mocker, callbacks):
+    listener_cls = mocker.patch("audiby.platform.hotkey_manager.Listener")
+    listener_instance = listener_cls.return_value
+    on_press, on_release = callbacks
+    manager = MacHotkeyManager("cmd+z", on_press, on_release)
+
+    manager.start()
+
+    listener_cls.assert_called_once()
+    listener_instance.start.assert_called_once()
+
+
 def test_mac_combo_press_release_invokes_callbacks(callbacks):
     from pynput.keyboard import Key, KeyCode
 
@@ -101,7 +113,7 @@ def test_mac_combo_press_release_invokes_callbacks(callbacks):
 
 
 def test_mac_start_wraps_listener_failure(mocker, callbacks):
-    listener_cls = mocker.patch("audiby.platform._hotkey_mac.Listener")
+    listener_cls = mocker.patch("audiby.platform.hotkey_manager.Listener")
     listener_cls.return_value.start.side_effect = RuntimeError("boom")
     on_press, on_release = callbacks
     manager = MacHotkeyManager("cmd+z", on_press, on_release)

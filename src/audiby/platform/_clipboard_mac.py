@@ -42,7 +42,7 @@ class MacClipboard(ClipboardBase):
         except subprocess.CalledProcessError as e:
             logger.error("Failed to read clipboard: %s", e.stderr)
             raise InjectionError("Failed to read clipboard") from e
-        return text
+        return text or None
 
     def set_text(self, text: str) -> None:
         try:

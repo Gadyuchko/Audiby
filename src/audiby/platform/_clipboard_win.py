@@ -85,6 +85,8 @@ class WindowsClipboard(ClipboardBase):
                 return text.rstrip("\0")
             finally:
                 GlobalUnlock(handle)
+        except InjectionError:
+            raise
         except Exception as e:
             logger.error("Error while reading clipboard: %s", e)
             raise InjectionError("Error while reading clipboard") from e
@@ -97,7 +99,7 @@ class WindowsClipboard(ClipboardBase):
         try:
             if not EmptyClipboard():
                 raise InjectionError("Failed to empty clipboard")
-            buffer_size = (len(text) +1 ) * ctypes.sizeof(ctypes.c_wchar)
+            buffer_size = (len(text) + 1) * ctypes.sizeof(ctypes.c_wchar)
             # id of mem block
             handle = GlobalAlloc(_GMEM_MOVEABLE, buffer_size)
 
