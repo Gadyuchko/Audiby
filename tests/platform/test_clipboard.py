@@ -177,3 +177,35 @@ def test_mac_get_text_failure_raises_injection_error(mac_cb):
 
     with pytest.raises(InjectionError):
         cb.get_text()
+
+
+def test_mac_restore_none_clears_clipboard(mac_cb):
+    """restore(None) must clear clipboard to prevent transcribed text from lingering."""
+    cb, m_sub = mac_cb
+    m_sub.CalledProcessError = subprocess.CalledProcessError
+
+    cb.restore(None)
+
+    m_sub.run.assert_called_once_with(["pbcopy"], input="", text=True, check=True)
+
+
+def test_mac_get_text_file_not_found_raises_injection_error(mac_cb):
+    """FileNotFoundError (missing pbpaste) must be caught and wrapped."""
+    cb, m_sub = mac_cb
+    m_sub.run.side_effect = FileNotFoundError("pbpaste not found")
+    m_sub.CalledProcessError = subprocess.CalledProcessError
+
+    with pytest.raises(InjectionError):
+        cb.get_text()
+
+
+def test_mac_set_text_file_not_found_raises_injection_error(mac_cb):
+    """FileNotFoundError (missing pbcopy) must be caught and wrapped."""
+    cb, m_sub = mac_cb
+    m_sub.run.side_effect = FileNotFoundError("pbcopy not found")
+    m_sub.CalledProcessError = subprocess.CalledProcessError
+
+    with pytest.raises(InjectionError):
+        cb.set_text("hello")
+
+

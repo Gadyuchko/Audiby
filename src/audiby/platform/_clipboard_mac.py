@@ -14,16 +14,7 @@ class MacClipboard(ClipboardBase):
         return self.get_text()
 
     def restore(self, state: Any) -> None:
-        if state is not None:
-            self.set_text(state)
-        else:
-            try:
-                self.set_text("")
-            except InjectionError:
-                raise
-            except Exception as e:
-                logger.error("Error while restoring clipboard: %s", e)
-                raise InjectionError("Error while restoring clipboard") from e
+        self.set_text(state if state is not None else "")
 
     def get_text(self) -> str | None:
         try:
@@ -39,8 +30,8 @@ class MacClipboard(ClipboardBase):
             text = subprocess.run(
                 ["pbpaste"], capture_output=True, text=True, check=True
             ).stdout
-        except subprocess.CalledProcessError as e:
-            logger.error("Failed to read clipboard: %s", e.stderr)
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            logger.error("Failed to read clipboard: %s", e)
             raise InjectionError("Failed to read clipboard") from e
         return text or None
 
@@ -49,6 +40,6 @@ class MacClipboard(ClipboardBase):
             # input=text: send new clipboard text to pbcopy via stdin.
             # text=True/check=True rationale is the same as get_text().
             subprocess.run(["pbcopy"], input=text, text=True, check=True)
-        except subprocess.CalledProcessError as e:
-            logger.error("Failed to write clipboard: %s", e.stderr)
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            logger.error("Failed to write clipboard: %s", e)
             raise InjectionError("Failed to write clipboard") from e

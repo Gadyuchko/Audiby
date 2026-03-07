@@ -408,6 +408,52 @@ class TestSequentialInjections:
         mock_cb.backup.assert_not_called()
 
 
+class TestPasteChordResolution:
+    """Paste modifier resolves correctly per platform constant."""
+
+    def test_uses_cmd_key_when_paste_chord_is_cmd_v(self, make_injector):
+        """On macOS, paste chord cmd+v must resolve to Key.cmd."""
+        tq = queue.Queue()
+        tq.put("mac paste")
+        mock_cb = MagicMock()
+        mock_cb.backup.return_value = "saved"
+        mock_ctrl = MagicMock()
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=None)
+        ctx.__exit__ = MagicMock(return_value=False)
+        mock_ctrl.pressed.return_value = ctx
+
+        with patch(f"{_P}.PASTE_CHORD", "cmd+v"):
+            injector, _, _, _ = make_injector(
+                text_queue=tq, clipboard_mod=mock_cb, controller=mock_ctrl,
+            )
+            injector.inject()
+
+        from pynput.keyboard import Key
+        mock_ctrl.pressed.assert_called_once_with(Key.cmd)
+
+    def test_uses_ctrl_key_when_paste_chord_is_ctrl_v(self, make_injector):
+        """On Windows, paste chord ctrl+v must resolve to Key.ctrl_l."""
+        tq = queue.Queue()
+        tq.put("win paste")
+        mock_cb = MagicMock()
+        mock_cb.backup.return_value = "saved"
+        mock_ctrl = MagicMock()
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=None)
+        ctx.__exit__ = MagicMock(return_value=False)
+        mock_ctrl.pressed.return_value = ctx
+
+        with patch(f"{_P}.PASTE_CHORD", "ctrl+v"):
+            injector, _, _, _ = make_injector(
+                text_queue=tq, clipboard_mod=mock_cb, controller=mock_ctrl,
+            )
+            injector.inject()
+
+        from pynput.keyboard import Key
+        mock_ctrl.pressed.assert_called_once_with(Key.ctrl_l)
+
+
 class TestAltNeutralization:
     """Alt-neutralization behavior before paste is configurable."""
 
