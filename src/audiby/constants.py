@@ -17,7 +17,7 @@ CONFIG_KEY_ALT_NEUTRALIZATION = "alt_neutralization_strategy"
 
 # Default values
 if sys.platform == "darwin":
-    DEFAULT_HOTKEY = "cmd+space"
+    DEFAULT_HOTKEY = "ctrl+space"
     PASTE_CHORD = "cmd+v"
     CONFIG_DIR = str(Path.home() / ".config" / "audiby")
 else:
