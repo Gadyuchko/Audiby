@@ -10,8 +10,9 @@ import threading
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from queue import Queue
-from typing import Tuple
-
+from typing import Tuple, Any
+from audiby.platform.shell import get_shell
+from audiby.ui.settings_window import SettingsWindow
 from audiby.config import Config
 from audiby.constants import (
     CONFIG_KEY_ALT_NEUTRALIZATION,
@@ -32,6 +33,8 @@ from audiby.core.audio_recorder import AudioRecorder
 from audiby.core.text_injector import TextInjector
 from audiby.core.transcriber import Transcriber
 from audiby.platform.hotkey_manager import get_hotkey_manager
+from audiby.platform.macos_permissions import ensure_mac_input_permissions
+from audiby.ui.tray import TrayController
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +62,7 @@ def run_app(config: Config) -> int:
     app = ApplicationOrchestrator(config)
     try:
         app.start()
-        app.stop_event.wait()  # blocks until shutdown is signaled
+        app.start_tray()
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
     except Exception:
@@ -165,6 +168,14 @@ class ApplicationOrchestrator:
         )
         self._hotkey_manager = get_hotkey_manager(hotkey, self.on_hotkey_press, self.on_hotkey_release)
 
+        log_path = config.config_dir / LOG_DIRNAME
+        self._settings_win = SettingsWindow()
+        self._trey_controller = TrayController(
+            on_settings=self._on_tray_settings,
+            on_open_log_folder=lambda: self._on_trey_open_logs_folder(log_path),
+            on_quit=self._on_tray_quit
+        )
+
     def on_hotkey_press(self) -> None:
         """Signal recording start - called by HotkeyManager on combo press."""
         logger.debug("Hotkey pressed - request recording start")
@@ -183,6 +194,7 @@ class ApplicationOrchestrator:
 
     def start(self) -> None:
         """Spawn worker threads and start the hotkey listener."""
+        ensure_mac_input_permissions()
         self._transcriber_thread = threading.Thread(
             target=self._transcriber_worker, name="transcriber", daemon=True,
         )
@@ -342,6 +354,24 @@ class ApplicationOrchestrator:
                 logger.exception("Audio stream close failed during shutdown: %s - %s", type(e).__name__, e)
             logger.debug("Audio worker stopped")
 
+    def _on_tray_settings(self) ->None:
+        try:
+            self._settings_win.show()
+        except Exception as e:
+            logger.error("Failed to show settings window: %s", e)
+
+    def _on_tray_quit(self) -> None:
+        self.shutdown()
+
+    def _on_trey_open_logs_folder(self, path: Path) -> Any:
+        _shell = get_shell()
+
+        try:
+            _shell.open_folder(path)
+        except Exception as e:
+            logger.error("Failed to open logs folder: %s", e)
+
+
     # Read-only accessors for pipeline queues and events.
     @property
     def audio_queue(self):
@@ -358,6 +388,9 @@ class ApplicationOrchestrator:
     @property
     def recording_event(self):
         return self._recording_event
+
+    def start_tray(self):
+        self._trey_controller.start()
 
     def _schedule_recovery(self, component: str, failures: int) -> Tuple[bool, int]:
         """
