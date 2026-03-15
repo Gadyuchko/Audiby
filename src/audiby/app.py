@@ -170,9 +170,9 @@ class ApplicationOrchestrator:
 
         log_path = config.config_dir / LOG_DIRNAME
         self._settings_win = SettingsWindow()
-        self._trey_controller = TrayController(
+        self._tray_controller = TrayController(
             on_settings=self._on_tray_settings,
-            on_open_log_folder=lambda: self._on_trey_open_logs_folder(log_path),
+            on_open_log_folder=lambda: self._on_tray_open_logs_folder(log_path),
             on_quit=self._on_tray_quit
         )
 
@@ -218,6 +218,14 @@ class ApplicationOrchestrator:
         self._stop_event.set()
         self._audio_control_event.set()
         self._hotkey_manager.stop()
+        try:
+            self._tray_controller.stop()
+        except Exception as exc:
+            logger.warning("Tray stop failed during shutdown: %s: %s", type(exc).__name__, exc)
+        try:
+            self._settings_win.destroy()
+        except Exception as exc:
+            logger.warning("Settings window cleanup failed during shutdown: %s: %s", type(exc).__name__, exc)
         if self._audio_thread:
             self._audio_thread.join(timeout=2)
         if self._transcriber_thread:
@@ -363,7 +371,7 @@ class ApplicationOrchestrator:
     def _on_tray_quit(self) -> None:
         self.shutdown()
 
-    def _on_trey_open_logs_folder(self, path: Path) -> Any:
+    def _on_tray_open_logs_folder(self, path: Path) -> Any:
         _shell = get_shell()
 
         try:
@@ -390,7 +398,7 @@ class ApplicationOrchestrator:
         return self._recording_event
 
     def start_tray(self):
-        self._trey_controller.start()
+        self._tray_controller.start()
 
     def _schedule_recovery(self, component: str, failures: int) -> Tuple[bool, int]:
         """

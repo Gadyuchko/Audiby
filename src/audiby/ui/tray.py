@@ -9,7 +9,18 @@ logger = logging.getLogger(__name__)
 _ROOT_PATH = Path(__file__).resolve().parent.parent.parent.parent
 
 class TrayController:
+    """
+    Handles the creation and management of the system tray icon for an application.
 
+    This class provides functionality to initialize and manage a system tray icon
+    with associated menu options for user interaction. It integrates with the
+    `pystray` library to display and handle user commands such as opening settings,
+    accessing the log folder, and quitting the application.
+
+    :ivar _tray_icon: Instance of `pystray.Icon` used to manage the tray icon
+                     and its menu.
+    :type _tray_icon: pystray.Icon
+    """
     def __init__(self, on_settings: Callable, on_open_log_folder: Callable, on_quit: Callable) -> None:
 
         self._on_settings = on_settings
