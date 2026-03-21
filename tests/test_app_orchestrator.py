@@ -492,12 +492,16 @@ class TestReinitializeHotkey:
         old_manager = hotkey_factory.return_value
         orch = ApplicationOrchestrator(mock_config)
 
-        orch.reinitialize_hotkey("alt+z")
+        # Set new combo in config before reinitializing
+        mock_config.get.side_effect = lambda key, default=None: {
+            "push_to_talk_key": "alt+z",
+        }.get(key, default)
+        orch.reinitialize_hotkey()
 
         old_manager.stop.assert_called_once()
 
     def test_reinitialize_creates_new_manager_with_new_combo(self, mock_config, patch_components, mocker):
-        """reinitialize_hotkey() must create a new manager with the new combo. (AC: #3)"""
+        """reinitialize_hotkey() must create a new manager with the combo from config. (AC: #3)"""
         mocker.patch("audiby.app.TrayController")
         mocker.patch("audiby.app.SettingsWindow")
         _, _, _, hotkey_factory = patch_components
@@ -505,10 +509,14 @@ class TestReinitializeHotkey:
         orch = ApplicationOrchestrator(mock_config)
         initial_call_count = hotkey_factory.call_count
 
-        orch.reinitialize_hotkey("alt+z")
+        # Set new combo in config before reinitializing
+        mock_config.get.side_effect = lambda key, default=None: {
+            "push_to_talk_key": "alt+z",
+        }.get(key, default)
+        orch.reinitialize_hotkey()
 
         assert hotkey_factory.call_count == initial_call_count + 1
-        # New manager created with "alt+z"
+        # New manager created with "alt+z" from config
         last_call_args = hotkey_factory.call_args
         assert last_call_args.args[0] == "alt+z" or last_call_args.kwargs.get("hotkey") == "alt+z"
 
@@ -519,13 +527,15 @@ class TestReinitializeHotkey:
         _, _, _, hotkey_factory = patch_components
 
         new_manager = MagicMock()
-        # First call returns old manager (in __init__), second returns new
         hotkey_factory.side_effect = [hotkey_factory.return_value, new_manager]
 
         orch = ApplicationOrchestrator(mock_config)
 
+        mock_config.get.side_effect = lambda key, default=None: {
+            "push_to_talk_key": "alt+z",
+        }.get(key, default)
         hotkey_factory.side_effect = [new_manager]
-        orch.reinitialize_hotkey("alt+z")
+        orch.reinitialize_hotkey()
 
         new_manager.start.assert_called_once()
 
@@ -546,7 +556,12 @@ class TestReinitializeHotkey:
         hotkey_factory.side_effect = [old_manager, bad_manager, restored_manager]
 
         orch = ApplicationOrchestrator(mock_config)
-        orch.reinitialize_hotkey("bad+combo")
+
+        # Set bad combo in config
+        mock_config.get.side_effect = lambda key, default=None: {
+            "push_to_talk_key": "bad+combo",
+        }.get(key, default)
+        orch.reinitialize_hotkey()
 
         # Should have attempted to restore original hotkey
         assert hotkey_factory.call_count == 3
@@ -568,8 +583,11 @@ class TestReinitializeHotkey:
 
         orch = ApplicationOrchestrator(mock_config)
 
+        mock_config.get.side_effect = lambda key, default=None: {
+            "push_to_talk_key": "bad+combo",
+        }.get(key, default)
         with caplog.at_level(logging.ERROR, logger="audiby.app"):
-            orch.reinitialize_hotkey("bad+combo")
+            orch.reinitialize_hotkey()
 
         assert any("registration failed" in r.message or "HotkeyError" in r.message
                     for r in caplog.records)

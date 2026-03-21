@@ -11,6 +11,8 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from queue import Queue
 from typing import Tuple, Any
+
+from audiby.exceptions import HotkeyError
 from audiby.platform.shell import get_shell
 from audiby.ui.settings_window import SettingsWindow
 from audiby.config import Config
@@ -133,6 +135,7 @@ class ApplicationOrchestrator:
 
     def __init__(self, config: Config) -> None:
         """Compose pipeline components from config and wire shared queues/events."""
+        self._config = config
         self._audio_queue: Queue = Queue()
         self._text_queue: Queue = Queue()
         self._stop_event = threading.Event()
@@ -143,7 +146,7 @@ class ApplicationOrchestrator:
         self._audio_thread: threading.Thread | None = None
 
         model_name = config.get(CONFIG_KEY_MODEL, DEFAULT_MODEL_SIZE)
-        hotkey = config.get(CONFIG_KEY_HOTKEY, DEFAULT_HOTKEY)
+        self._hotkey = config.get(CONFIG_KEY_HOTKEY, DEFAULT_HOTKEY)
         alt_neutralization_strategy = config.get(
             CONFIG_KEY_ALT_NEUTRALIZATION, DEFAULT_ALT_NEUTRALIZATION_STRATEGY
         )
@@ -164,12 +167,12 @@ class ApplicationOrchestrator:
         self._injector = TextInjector(
             self._text_queue,
             alt_neutralization_strategy=alt_neutralization_strategy,
-            hotkey_uses_alt="alt" in hotkey.lower(),
+            hotkey_uses_alt="alt" in self._hotkey.lower(),
         )
-        self._hotkey_manager = get_hotkey_manager(hotkey, self.on_hotkey_press, self.on_hotkey_release)
+        self._hotkey_manager = get_hotkey_manager(self._hotkey, self.on_hotkey_press, self.on_hotkey_release)
 
         log_path = config.config_dir / LOG_DIRNAME
-        self._settings_win = SettingsWindow()
+        self._settings_win = SettingsWindow(config, self.reinitialize_hotkey)
         self._tray_controller = TrayController(
             on_settings=self._on_tray_settings,
             on_open_log_folder=lambda: self._on_tray_open_logs_folder(log_path),
@@ -378,6 +381,22 @@ class ApplicationOrchestrator:
             _shell.open_folder(path)
         except Exception as e:
             logger.error("Failed to open logs folder: %s", e)
+
+    def reinitialize_hotkey(self):
+        new_combo = self._config.get(CONFIG_KEY_HOTKEY, DEFAULT_HOTKEY)
+        old_hotkey = self._hotkey
+        self._hotkey_manager.stop()
+        try:
+            self._hotkey_manager = get_hotkey_manager(new_combo, self.on_hotkey_press, self.on_hotkey_release)
+            self._hotkey_manager.start()
+            self._hotkey = new_combo
+            self._injector._hotkey_uses_alt = "alt" in new_combo.lower()
+            logger.debug("Updated injector hotkey_uses_alt=%s", self._injector._hotkey_uses_alt)
+        except HotkeyError as e:
+            logger.error("Failed to reinitialize hotkey: %s, falling back to old hotkey %s. Error: %s", new_combo, old_hotkey, e)
+            self._hotkey_manager = get_hotkey_manager(old_hotkey, self.on_hotkey_press, self.on_hotkey_release)
+            self._hotkey_manager.start()
+            self._config.set(CONFIG_KEY_HOTKEY, old_hotkey)
 
 
     # Read-only accessors for pipeline queues and events.
