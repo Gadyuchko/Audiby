@@ -32,6 +32,8 @@ class SettingsWindow:
         self._capturing = False
         self._pressed_modifiers = set()
         self._key_listener = None
+        self._save_button = None
+        self._error_label = None
         self._window = None
         self._gui_thread = None
 
@@ -139,6 +141,7 @@ class SettingsWindow:
         self._hotkey_value.config(state="normal")
         self._bind_hotkey.set("Press a key combination...")
         self._hotkey_value.config(state="readonly", readonlybackground="#FFFFCC")
+        self._save_button.config(state="disabled")
         self._key_listener = KeyboardListener(
             on_press=self._on_key_press,
             on_release=self._on_key_release,
@@ -150,6 +153,8 @@ class SettingsWindow:
         self._capturing = False
         if self._hotkey_value is not None:
             self._hotkey_value.config(readonlybackground="SystemButtonFace")
+        if self._save_button is not None:
+            self._save_button.config(state="normal")
         if self._key_listener is not None:
             self._key_listener.stop()
             self._key_listener = None
