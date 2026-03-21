@@ -53,7 +53,7 @@ def orchestrator(mock_config, patch_components):
 
 
 # ---------------------------------------------------------------------------
-# Task 1.1 — Queues and control events initialized correctly (AC: #1)
+# Queues and control events initialized correctly
 # ---------------------------------------------------------------------------
 
 class TestOrchestratorInit:
@@ -97,7 +97,7 @@ class TestOrchestratorInit:
 
 
 # ---------------------------------------------------------------------------
-# Task 1.2 — Worker threads created with expected targets and names (AC: #1)
+# Worker threads created with expected targets and names
 # ---------------------------------------------------------------------------
 
 class TestWorkerThreads:
@@ -146,7 +146,7 @@ class TestWorkerThreads:
 
 
 # ---------------------------------------------------------------------------
-# Task 1.3 — Hotkey press/release trigger start/stop signaling (AC: #1, #2)
+# Hotkey press/release trigger start/stop signaling
 # ---------------------------------------------------------------------------
 
 class TestHotkeySignaling:
@@ -191,7 +191,7 @@ class TestHotkeySignaling:
 
 
 # ---------------------------------------------------------------------------
-# Task 1.4 — Sequential bursts process independently (AC: #2)
+# Sequential bursts process independently
 # ---------------------------------------------------------------------------
 
 class TestSequentialBursts:
@@ -232,7 +232,7 @@ class TestSequentialBursts:
 
 
 # ---------------------------------------------------------------------------
-# Task 1.5 — Worker exception logs failure and triggers recovery (AC: #3)
+# Worker exception logs failure and triggers recovery
 # ---------------------------------------------------------------------------
 
 class TestWorkerRecovery:
@@ -361,7 +361,7 @@ class TestWorkerRecovery:
 
 
 # ---------------------------------------------------------------------------
-# Task 1.6 — Graceful shutdown and idempotency (AC: #3)
+# Graceful shutdown and idempotency
 # ---------------------------------------------------------------------------
 
 class TestShutdown:
@@ -421,7 +421,7 @@ class TestShutdown:
 
 
 # ---------------------------------------------------------------------------
-# Story 3.1 — Tray lifecycle integration and quit behavior (AC: #1, #4)
+# Tray lifecycle integration and quit behavior
 # ---------------------------------------------------------------------------
 
 class TestTrayIntegration:
@@ -474,3 +474,102 @@ class TestTrayIntegration:
         orch.start()
         orch.shutdown()
         orch.shutdown()  # second call — no error
+
+
+# ---------------------------------------------------------------------------
+# Reinitialize_hotkey
+# ---------------------------------------------------------------------------
+
+class TestReinitializeHotkey:
+    """Tests for orchestrator hotkey re-registration without app restart."""
+
+    def test_reinitialize_stops_old_manager(self, mock_config, patch_components, mocker):
+        """reinitialize_hotkey() must stop the current hotkey manager. (AC: #3)"""
+        mocker.patch("audiby.app.TrayController")
+        mocker.patch("audiby.app.SettingsWindow")
+        _, _, _, hotkey_factory = patch_components
+
+        old_manager = hotkey_factory.return_value
+        orch = ApplicationOrchestrator(mock_config)
+
+        orch.reinitialize_hotkey("alt+z")
+
+        old_manager.stop.assert_called_once()
+
+    def test_reinitialize_creates_new_manager_with_new_combo(self, mock_config, patch_components, mocker):
+        """reinitialize_hotkey() must create a new manager with the new combo. (AC: #3)"""
+        mocker.patch("audiby.app.TrayController")
+        mocker.patch("audiby.app.SettingsWindow")
+        _, _, _, hotkey_factory = patch_components
+
+        orch = ApplicationOrchestrator(mock_config)
+        initial_call_count = hotkey_factory.call_count
+
+        orch.reinitialize_hotkey("alt+z")
+
+        assert hotkey_factory.call_count == initial_call_count + 1
+        # New manager created with "alt+z"
+        last_call_args = hotkey_factory.call_args
+        assert last_call_args.args[0] == "alt+z" or last_call_args.kwargs.get("hotkey") == "alt+z"
+
+    def test_reinitialize_starts_new_manager(self, mock_config, patch_components, mocker):
+        """reinitialize_hotkey() must start the newly created manager. (AC: #3)"""
+        mocker.patch("audiby.app.TrayController")
+        mocker.patch("audiby.app.SettingsWindow")
+        _, _, _, hotkey_factory = patch_components
+
+        new_manager = MagicMock()
+        # First call returns old manager (in __init__), second returns new
+        hotkey_factory.side_effect = [hotkey_factory.return_value, new_manager]
+
+        orch = ApplicationOrchestrator(mock_config)
+
+        hotkey_factory.side_effect = [new_manager]
+        orch.reinitialize_hotkey("alt+z")
+
+        new_manager.start.assert_called_once()
+
+    def test_reinitialize_failure_keeps_old_manager(self, mock_config, patch_components, mocker):
+        """If new hotkey registration fails, old manager must be restored. (AC: #4)"""
+        mocker.patch("audiby.app.TrayController")
+        mocker.patch("audiby.app.SettingsWindow")
+        _, _, _, hotkey_factory = patch_components
+
+        from audiby.exceptions import HotkeyError
+
+        old_manager = MagicMock()
+        bad_manager = MagicMock()
+        bad_manager.start.side_effect = HotkeyError("registration failed")
+        restored_manager = MagicMock()
+
+        # __init__ gets old_manager, reinitialize gets bad_manager, fallback gets restored_manager
+        hotkey_factory.side_effect = [old_manager, bad_manager, restored_manager]
+
+        orch = ApplicationOrchestrator(mock_config)
+        orch.reinitialize_hotkey("bad+combo")
+
+        # Should have attempted to restore original hotkey
+        assert hotkey_factory.call_count == 3
+        restored_manager.start.assert_called_once()
+
+    def test_reinitialize_failure_logs_error(self, mock_config, patch_components, mocker, caplog):
+        """Failed hotkey re-registration must be logged. (AC: #4)"""
+        mocker.patch("audiby.app.TrayController")
+        mocker.patch("audiby.app.SettingsWindow")
+        _, _, _, hotkey_factory = patch_components
+
+        from audiby.exceptions import HotkeyError
+
+        old_manager = MagicMock()
+        bad_manager = MagicMock()
+        bad_manager.start.side_effect = HotkeyError("registration failed")
+
+        hotkey_factory.side_effect = [old_manager, bad_manager, MagicMock()]
+
+        orch = ApplicationOrchestrator(mock_config)
+
+        with caplog.at_level(logging.ERROR, logger="audiby.app"):
+            orch.reinitialize_hotkey("bad+combo")
+
+        assert any("registration failed" in r.message or "HotkeyError" in r.message
+                    for r in caplog.records)
