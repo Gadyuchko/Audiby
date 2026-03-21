@@ -48,7 +48,20 @@ class SettingsWindow:
         self._gui_thread.start()
 
     def _build_and_run(self):
-        """Create the window and run mainloop on a dedicated thread."""
+        """
+        Constructs and runs the settings window for the application, providing the user with
+        options to configure the hotkey and save settings.
+
+        This method creates a graphical user interface (GUI) window using the Tkinter library.
+        The window allows the user to view and modify a configurable hotkey setting. If a new
+        hotkey is invalid, an error label will be displayed. The GUI window is positioned
+        near the bottom-right corner of the screen for convenient access.
+
+        Process runs on dedicated GUI thread precreated in show().
+        :raises Exception: If any unexpected issues occur during the execution of this method
+
+        :return: None
+        """
         logger.debug("Building settings window")
         self._window = tk.Tk()
         self._window.title("Settings")
@@ -142,7 +155,17 @@ class SettingsWindow:
             self._key_listener = None
 
     def _on_key_press(self, key):
-        """pynput on_press callback — track modifiers, capture combo on non-modifier."""
+        """
+        Handles key press events, processing both modifier keys and non-modifier keys to construct a
+        key combination string. The constructed key combination string is then passed to a callback
+        function for further handling.
+
+        This method is designed to function only when capturing mode is active.
+
+        :param key: The key press event to process. It is expected to be an object with attributes
+            such as ``char`` or ``name`` for name resolution.
+        :type key: Any
+        """
         if not self._capturing:
             return
         if key in self._MODIFIER_KEYS:
@@ -170,6 +193,7 @@ class SettingsWindow:
 
         # Schedule the UI update on the tkinter thread
         if self._window is not None:
+            # use after() to safely schedule lift() on the tkinter thread.
             self._window.after(0, lambda: self._on_hotkey_captured(key_combo))
 
     def _on_key_release(self, key):
@@ -186,6 +210,15 @@ class SettingsWindow:
         return "+".join(parts)
 
     def _on_hotkey_captured(self, key_combo: str):
+        """
+        Handles the process of capturing and validating a hotkey combination
+        entered by the user. Parses the hotkey, updates the relevant UI
+        components, and manages state transitions for capturing input.
+
+        :param key_combo: The hotkey combination entered by the user.
+        :type key_combo: str
+        :return: None
+        """
         try:
             HotKey.parse(self._to_pynput_format(key_combo))
             logger.debug("Valid hotkey captured: %s", key_combo)
