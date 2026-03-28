@@ -566,6 +566,9 @@ class TestReinitializeHotkey:
         # Should have attempted to restore original hotkey
         assert hotkey_factory.call_count == 3
         restored_manager.start.assert_called_once()
+        # Config must be restored in memory and persisted to disk (H2)
+        mock_config.set.assert_any_call("push_to_talk_key", "alt+z")
+        mock_config.save.assert_called()
 
     def test_reinitialize_failure_logs_error(self, mock_config, patch_components, mocker, caplog):
         """Failed hotkey re-registration must be logged. (AC: #4)"""
@@ -591,3 +594,48 @@ class TestReinitializeHotkey:
 
         assert any("registration failed" in r.message or "HotkeyError" in r.message
                     for r in caplog.records)
+
+    def test_reinitialize_failure_persists_fallback_to_disk(self, mock_config, patch_components, mocker):
+        """Fallback to old hotkey after HotkeyError must call config.save() to persist to disk. (H2)"""
+        mocker.patch("audiby.app.TrayController")
+        mocker.patch("audiby.app.SettingsWindow")
+        _, _, _, hotkey_factory = patch_components
+
+        from audiby.exceptions import HotkeyError
+
+        bad_manager = MagicMock()
+        bad_manager.start.side_effect = HotkeyError("registration failed")
+        hotkey_factory.side_effect = [MagicMock(), bad_manager, MagicMock()]
+
+        orch = ApplicationOrchestrator(mock_config)
+        mock_config.get.side_effect = lambda key, default=None: {
+            "push_to_talk_key": "bad+combo",
+        }.get(key, default)
+        orch.reinitialize_hotkey()
+
+        mock_config.save.assert_called()
+
+    def test_reinitialize_unexpected_exception_logs_and_restores(self, mock_config, patch_components, mocker, caplog):
+        """Unexpected exception during hotkey init must be logged and old manager restored. (M2)"""
+        mocker.patch("audiby.app.TrayController")
+        mocker.patch("audiby.app.SettingsWindow")
+        _, _, _, hotkey_factory = patch_components
+
+        old_manager = MagicMock()
+        bad_manager = MagicMock()
+        bad_manager.start.side_effect = RuntimeError("unexpected failure")
+        restored_manager = MagicMock()
+        hotkey_factory.side_effect = [old_manager, bad_manager, restored_manager]
+
+        orch = ApplicationOrchestrator(mock_config)
+        mock_config.get.side_effect = lambda key, default=None: {
+            "push_to_talk_key": "ctrl+z",
+        }.get(key, default)
+
+        with caplog.at_level(logging.ERROR, logger="audiby.app"):
+            orch.reinitialize_hotkey()
+
+        assert any("unexpected" in r.message.lower() or "RuntimeError" in r.message
+                    for r in caplog.records)
+        restored_manager.start.assert_called_once()
+        mock_config.save.assert_called()

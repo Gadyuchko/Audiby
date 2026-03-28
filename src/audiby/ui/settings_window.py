@@ -22,6 +22,7 @@ class SettingsWindow:
                        Key.alt, Key.alt_l, Key.alt_r, Key.alt_gr,
                        Key.shift, Key.shift_l, Key.shift_r,
                        Key.cmd, Key.cmd_l, Key.cmd_r}
+    _CMD_WIN_KEYS = {Key.cmd, Key.cmd_l, Key.cmd_r}
 
     def __init__(self, config: Config, on_save: Callable):
         self._config = config
@@ -34,6 +35,7 @@ class SettingsWindow:
         self._key_listener = None
         self._save_button = None
         self._error_label = None
+        self._pre_capture_value = None
         self._window = None
         self._gui_thread = None
 
@@ -82,7 +84,7 @@ class SettingsWindow:
         self._hotkey_value.bind('<Button-1>', self._start_capture)
 
         # error label for invalid hotkey
-        self._error_label = tk.Label(self._window, text="Invalid hot key combination. Select another combination.", fg="red")
+        self._error_label = tk.Label(self._window, text="", fg="red")
 
         # save button
         self._save_button = tk.Button(self._window, text="Save", command=self._on_save_clicked)
@@ -137,6 +139,7 @@ class SettingsWindow:
         """
         logger.debug("Hotkey capture mode started")
         self._capturing = True
+        self._pre_capture_value = self._bind_hotkey.get()
         self._pressed_modifiers = set()
         self._hotkey_value.config(state="normal")
         self._bind_hotkey.set("Press a key combination...")
@@ -175,6 +178,12 @@ class SettingsWindow:
             return
         if key in self._MODIFIER_KEYS:
             self._pressed_modifiers.add(key)
+            return
+
+        # Reject OS-reserved modifiers (Cmd/Win) — OS intercepts these globally
+        if any(k in self._pressed_modifiers for k in self._CMD_WIN_KEYS):
+            if self._window is not None:
+                self._window.after(0, self._on_reserved_modifier_rejected)
             return
 
         # Non-modifier key pressed — build the combo string
@@ -234,8 +243,28 @@ class SettingsWindow:
             self._stop_capture()
         except ValueError:
             logger.debug("Invalid hotkey rejected: %s", key_combo)
-            self._error_label.grid(row=1, column=0, columnspan=2)
+            self._show_error("Invalid key combination. Select another combination.")
+            if self._pre_capture_value is not None:
+                self._hotkey_value.config(state="normal")
+                self._bind_hotkey.set(self._pre_capture_value)
+                self._hotkey_value.config(state="readonly")
             self._stop_capture()
+
+    def _show_error(self, message: str):
+        """Set error label text and make it visible."""
+        if self._error_label is None:
+            return
+        self._error_label.config(text=message)
+        self._error_label.grid(row=1, column=0, columnspan=2)
+
+    def _on_reserved_modifier_rejected(self):
+        """Reject combo using OS-reserved modifier — show error and restore display."""
+        self._show_error("OS-reserved modifier (Cmd/Win) cannot be used. Select another combination.")
+        if self._hotkey_value is not None and self._pre_capture_value is not None:
+            self._hotkey_value.config(state="normal")
+            self._bind_hotkey.set(self._pre_capture_value)
+            self._hotkey_value.config(state="readonly")
+        self._stop_capture()
 
     def _on_save_clicked(self):
         new_hotkey = self._bind_hotkey.get()

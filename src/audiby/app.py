@@ -397,6 +397,16 @@ class ApplicationOrchestrator:
             self._hotkey_manager = get_hotkey_manager(old_hotkey, self.on_hotkey_press, self.on_hotkey_release)
             self._hotkey_manager.start()
             self._config.set(CONFIG_KEY_HOTKEY, old_hotkey)
+            self._config.save()
+        except Exception as e:
+            logger.error("Unexpected error reinitializing hotkey %s: %s — %s", new_combo, type(e).__name__, e)
+            try:
+                self._hotkey_manager = get_hotkey_manager(old_hotkey, self.on_hotkey_press, self.on_hotkey_release)
+                self._hotkey_manager.start()
+            except Exception as restore_exc:
+                logger.error("Failed to restore hotkey manager: %s", restore_exc)
+            self._config.set(CONFIG_KEY_HOTKEY, old_hotkey)
+            self._config.save()
 
 
     # Read-only accessors for pipeline queues and events.

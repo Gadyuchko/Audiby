@@ -190,19 +190,16 @@ class TestHotkeyDisplay:
 class TestHotkeyCapture:
     """AC #2: User can capture a new hotkey combination."""
 
-    def test_captured_hotkey_updates_display(self, settings_window, mock_config, mock_tk):
+    def test_captured_hotkey_updates_display(self, settings_window, mock_config, mock_tk, mocker):
         """When a new valid hotkey is captured, the display field must update."""
+        mocker.patch("audiby.ui.settings_window.HotKey.parse")
         _open_window(settings_window)
 
-        # The capture mechanism should exist - we verify it's wired up
-        # by checking that keyboard bindings were set on the window or a widget
-        window = mock_tk["Tk"].return_value
-        bind_calls = [c for c in window.method_calls if "bind" in c[0]]
-        entry = mock_tk["Entry"].return_value
-        entry_bind_calls = [c for c in entry.method_calls if "bind" in c[0]]
+        settings_window._on_hotkey_captured("ctrl+z")
 
-        assert len(bind_calls) > 0 or len(entry_bind_calls) > 0, (
-            "No key bindings found — hotkey capture field must bind keyboard events"
+        stringvar = mock_tk["StringVar"].return_value
+        assert stringvar.get() == "ctrl+z", (
+            f"Expected display to show 'ctrl+z' after capture, got: {stringvar.get()}"
         )
 
 
@@ -253,6 +250,7 @@ class TestHotkeyValidation:
 
         _open_window(settings_window)
 
+        settings_window._pre_capture_value = "ctrl+space"
         if hasattr(settings_window, '_on_hotkey_captured'):
             settings_window._on_hotkey_captured("bad+++key")
         elif hasattr(settings_window, '_validate_and_stage_hotkey'):
@@ -262,6 +260,11 @@ class TestHotkeyValidation:
         set_calls = [c for c in mock_config.set.call_args_list
                      if len(c.args) >= 2 and c.args[1] == "bad+++key"]
         assert len(set_calls) == 0, "Invalid hotkey was staged in config"
+        # Display must be restored to the original hotkey
+        stringvar = mock_tk["StringVar"].return_value
+        assert stringvar.get() == "ctrl+space", (
+            f"Expected display restored to 'ctrl+space' after invalid capture, got: {stringvar.get()}"
+        )
 
 
 class TestSaveButton:
@@ -288,6 +291,7 @@ class TestSaveButton:
         mock_config.set.assert_any_call("push_to_talk_key", "alt+z")
         mock_config.save.assert_called_once()
         mock_on_save.assert_called_once()
+        assert settings_window._window is None, "Window must close after Save is clicked"
 
     def test_save_without_changes_still_persists(self, settings_window, mock_config, mock_on_save, mock_tk):
         """Save with no hotkey change should still persist current config and call callback."""
@@ -300,6 +304,45 @@ class TestSaveButton:
 
         mock_config.save.assert_called_once()
         mock_on_save.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Reserved modifier rejection
+# ---------------------------------------------------------------------------
+
+class TestReservedModifierRejection:
+    """M1: Cmd/Win modifiers must be rejected, not silently dropped."""
+
+    def test_cmd_modifier_triggers_rejection_via_after(self, settings_window, mock_config, mock_tk, mocker):
+        """Pressing Cmd+key must schedule a rejection callback, not build a combo."""
+        mocker.patch("audiby.ui.settings_window.HotKey.parse")
+        _open_window(settings_window)
+
+        from pynput.keyboard import Key
+        settings_window._capturing = True
+        settings_window._pre_capture_value = "ctrl+space"
+        settings_window._pressed_modifiers = {Key.cmd_l}
+
+        mock_key = mocker.MagicMock()
+        mock_key.char = "a"
+        settings_window._on_key_press(mock_key)
+
+        mock_window = mock_tk["Tk"].return_value
+        after_calls = [c for c in mock_window.method_calls if c[0] == "after"]
+        assert len(after_calls) > 0, "Cmd+key must schedule a rejection callback via after()"
+
+    def test_reserved_modifier_restores_previous_hotkey(self, settings_window, mock_config, mock_tk):
+        """_on_reserved_modifier_rejected must restore the previous hotkey in the display."""
+        _open_window(settings_window)
+        settings_window._pre_capture_value = "ctrl+space"
+        settings_window._capturing = True
+
+        settings_window._on_reserved_modifier_rejected()
+
+        stringvar = mock_tk["StringVar"].return_value
+        assert stringvar.get() == "ctrl+space", (
+            f"Expected display restored to 'ctrl+space', got: {stringvar.get()}"
+        )
 
 
 # ---------------------------------------------------------------------------
