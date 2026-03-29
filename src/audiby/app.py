@@ -6,6 +6,7 @@ a linear push-to-talk pipeline: hotkey → audio → transcribe → inject.
 
 import logging
 import queue
+import sys
 import threading
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -28,7 +29,7 @@ from audiby.constants import (
     LOG_FILENAME,
     LOG_FORMAT,
     LOG_LEVEL,
-    LOG_MAX_BYTES,
+    LOG_MAX_BYTES, CONFIG_KEY_AUTOSTART,
 )
 from audiby.core import model_manager
 from audiby.core.audio_recorder import AudioRecorder
@@ -37,6 +38,7 @@ from audiby.core.transcriber import Transcriber
 from audiby.platform.hotkey_manager import get_hotkey_manager
 from audiby.platform.macos_permissions import ensure_mac_input_permissions
 from audiby.ui.tray import TrayController
+from audiby.platform.autostart import get_autostart
 
 logger = logging.getLogger(__name__)
 
@@ -172,7 +174,7 @@ class ApplicationOrchestrator:
         self._hotkey_manager = get_hotkey_manager(self._hotkey, self.on_hotkey_press, self.on_hotkey_release)
 
         log_path = config.config_dir / LOG_DIRNAME
-        self._settings_win = SettingsWindow(config, self.reinitialize_hotkey)
+        self._settings_win = SettingsWindow(config, self.apply_settings)
         self._tray_controller = TrayController(
             on_settings=self._on_tray_settings,
             on_open_log_folder=lambda: self._on_tray_open_logs_folder(log_path),
@@ -382,10 +384,127 @@ class ApplicationOrchestrator:
         except Exception as e:
             logger.error("Failed to open logs folder: %s", e)
 
-    def reinitialize_hotkey(self):
-        new_combo = self._config.get(CONFIG_KEY_HOTKEY, DEFAULT_HOTKEY)
+    def apply_settings(self, hotkey : str, autostart: bool, model: str) -> str | None:
+        """
+        Applies settings such as the hotkey, autostart preference, and model configuration. This method validates
+        the provided settings and updates the internal configuration. If any errors occur during validation or
+        application of the settings, an error message is accumulated and returned. The configuration
+        is flushed to disc in any case to preserve whatever changes were made.
+
+        :param hotkey: The new hotkey to be set.
+        :type hotkey: str
+        :param autostart: A boolean value indicating whether the application should start automatically.
+        :type autostart: bool
+        :param model: The name of the model to be applied.
+        :type model: str
+        :return: An error message if any validation checks fail; otherwise, None.
+        :rtype: str | None
+        """
+        errors_message = ""
+
+        hotkey_error = self.reinitialize_hotkey(hotkey)
+        if hotkey_error:
+            errors_message += hotkey_error + "\n"
+        else:
+            self._config.set(CONFIG_KEY_HOTKEY, hotkey)
+
+        model_error = self.set_model(model)
+        if model_error:
+            errors_message += model_error + "\n"
+        else:
+            self._config.set(CONFIG_KEY_MODEL, model)
+
+        autostart_error = self.set_autostart(autostart)
+        if autostart_error:
+            errors_message += autostart_error
+        else:
+            self._config.set(CONFIG_KEY_AUTOSTART, autostart)
+
+        self._config.save()
+        if errors_message:
+            return errors_message
+        else:
+            return None
+
+    def set_model(self, model: str) -> str | None:
+        """
+        Sets the transcription model for the application. If the given model is already set,
+        no changes are made. If the model does not exist locally, it attempts to download it, showing the blocking dialog.
+        The method initializes the transcriber with the specified model in case of success and sets config value in mem, and in case of
+        failure, reverts to the previous transcriber.
+
+        :param model: Name of the transcription model to be set.
+        :type model: str
+        :return: A message indicating failure to download or initialize the model, or None if
+                 the operation is successful.
+        :rtype: str | None
+        """
+        old_model = self._config.get(CONFIG_KEY_MODEL)
+        if old_model == model:
+            return None
+
+        model_path = model_manager.get_model_root() / model
+        old_transcriber = self._transcriber
+
+        if not model_path.exists():
+            return f"Model {model} is not downloaded."
+
+        self._model_path = model_path
+        try:
+            self._transcriber = Transcriber(model_path, self._audio_queue, self._text_queue)
+        except Exception as e:
+            logger.error("Failed to initialize transcriber: %s", e)
+            self._transcriber = old_transcriber
+            return f"Failed to initialize {model} model. Falling back to old one."
+        return None
+
+    def set_autostart(self, autostart: bool) -> str | None:
+        """
+        Sets the autostart setting for the application, enabling or disabling it
+        as specified. If the new value is the same as the current one, no action
+        is performed.
+
+        :param autostart: The new autostart setting. If True, enables autostart;
+            if False, disables autostart.
+        :type autostart: bool
+        :return: A message indicating failure if the autostart setting could not
+            be changed, or None if it was successfully changed or already matched
+            the existing value.
+        :rtype: str | None
+        """
+        old_value = self._config.get(CONFIG_KEY_AUTOSTART)
+        if old_value == autostart:
+            return None
+        # try to set new value
+        try:
+           autostart_settings = get_autostart()
+           if autostart:
+               autostart_settings.enable(sys.executable)
+           else:
+               autostart_settings.disable()
+           logger.info("Autostart set to %s",autostart)
+        except Exception as e:
+            logger.error("Failed to set autostart: %s", e)
+            return f"Failed to set autostart to {'enabled' if autostart else 'disabled'}."
+
+    def reinitialize_hotkey(self, hotkey:str)-> str | None:
+        """
+        Reinitializes the hotkey, attempting to set a new hotkey combination and handle fallback
+        scenarios gracefully in case of failure.
+
+        This method stops the currently active hotkey manager, tries to create a new hotkey manager
+        with the provided hotkey combination, and reactivates it. In case of an error during the
+        process, it logs the error, restores the previous hotkey, and ensures the application can
+        recover from the failure.
+
+        :param hotkey: A string representing the new hotkey combination to set.
+        :return: A string message detailing the outcome of the reinitialization attempt, or None in
+            case of success.
+        """
+        new_combo = hotkey
         old_hotkey = self._hotkey
         self._hotkey_manager.stop()
+
         try:
             self._hotkey_manager = get_hotkey_manager(new_combo, self.on_hotkey_press, self.on_hotkey_release)
             self._hotkey_manager.start()
@@ -397,16 +516,20 @@ class ApplicationOrchestrator:
             self._hotkey_manager = get_hotkey_manager(old_hotkey, self.on_hotkey_press, self.on_hotkey_release)
             self._hotkey_manager.start()
             self._config.set(CONFIG_KEY_HOTKEY, old_hotkey)
-            self._config.save()
+            return f"Failed to reinitialize hotkey to {new_combo}. Falling back to old hotkey {old_hotkey}."
         except Exception as e:
             logger.error("Unexpected error reinitializing hotkey %s: %s — %s", new_combo, type(e).__name__, e)
+
             try:
                 self._hotkey_manager = get_hotkey_manager(old_hotkey, self.on_hotkey_press, self.on_hotkey_release)
                 self._hotkey_manager.start()
+                self._config.set(CONFIG_KEY_HOTKEY, old_hotkey)
+                return f"Failed to reinitialize hotkey to {new_combo}. Fell back to old hotkey {old_hotkey}."
             except Exception as restore_exc:
                 logger.error("Failed to restore hotkey manager: %s", restore_exc)
-            self._config.set(CONFIG_KEY_HOTKEY, old_hotkey)
-            self._config.save()
+                self._config.set(CONFIG_KEY_HOTKEY, old_hotkey)
+                return f"Failed to restore hotkey manager to {old_hotkey}."
+
 
 
     # Read-only accessors for pipeline queues and events.

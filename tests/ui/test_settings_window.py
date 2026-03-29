@@ -1,7 +1,8 @@
 """Behavior-focused tests for SettingsWindow.
 
 Tests validate window open/show lifecycle, singleton reuse on repeated calls,
-destroy cleanup, hotkey configuration controls, and unsaved-changes discard.
+destroy cleanup, hotkey configuration controls, autostart checkbox, model
+selector, batch-save flow, error display, and unsaved-changes discard.
 All tkinter interactions are mocked — no real GUI is created.
 
 Note: Tests call _build_and_run() directly to bypass the threading layer,
@@ -17,6 +18,15 @@ import pytest
 # Fixtures
 # ---------------------------------------------------------------------------
 
+def _make_var_mock():
+    """Create a mock that behaves like a tkinter StringVar/BooleanVar."""
+    _stored = [None]
+    mock = MagicMock()
+    mock.set.side_effect = lambda v: _stored.__setitem__(0, v)
+    mock.get.side_effect = lambda: _stored[0]
+    return mock
+
+
 @pytest.fixture
 def mock_tk(mocker):
     """Mock tkinter so no real GUI window is created."""
@@ -26,11 +36,15 @@ def mock_tk(mocker):
     mock_button_cls = mocker.patch("audiby.ui.settings_window.tk.Button", create=True)
     mock_entry_cls = mocker.patch("audiby.ui.settings_window.tk.Entry", create=True)
     mock_frame_cls = mocker.patch("audiby.ui.settings_window.tk.Frame", create=True)
+    mock_checkbutton_cls = mocker.patch("audiby.ui.settings_window.tk.Checkbutton", create=True)
+    mock_combobox_cls = mocker.patch("audiby.ui.settings_window.ttk.Combobox", create=True)
     mock_stringvar_cls = mocker.patch("audiby.ui.settings_window.tk.StringVar", create=True)
-    # Wire StringVar mock so .set() stores the value and .get() returns it
-    _stored = [None]
-    mock_stringvar_cls.return_value.set.side_effect = lambda v: _stored.__setitem__(0, v)
-    mock_stringvar_cls.return_value.get.side_effect = lambda: _stored[0]
+    mock_booleanvar_cls = mocker.patch("audiby.ui.settings_window.tk.BooleanVar", create=True)
+
+    # Each StringVar/BooleanVar call gets its own independent store
+    mock_stringvar_cls.side_effect = lambda: _make_var_mock()
+    mock_booleanvar_cls.side_effect = lambda: _make_var_mock()
+
     return {
         "Tk": mock_tk_cls,
         "Toplevel": mock_toplevel_cls,
@@ -38,22 +52,32 @@ def mock_tk(mocker):
         "Button": mock_button_cls,
         "Entry": mock_entry_cls,
         "Frame": mock_frame_cls,
+        "Checkbutton": mock_checkbutton_cls,
+        "Combobox": mock_combobox_cls,
         "StringVar": mock_stringvar_cls,
+        "BooleanVar": mock_booleanvar_cls,
     }
 
 
 @pytest.fixture
 def mock_config():
-    """Config mock returning default hotkey."""
+    """Config mock returning per-key defaults."""
     cfg = MagicMock()
-    cfg.get.return_value = "ctrl+space"
+    _config_data = {
+        "push_to_talk_key": "ctrl+space",
+        "start_on_boot": False,
+        "model_size": "base",
+    }
+    cfg.get.side_effect = lambda key, default=None: _config_data.get(key, default)
     return cfg
 
 
 @pytest.fixture
 def mock_on_save():
-    """Callback mock for Save button."""
-    return MagicMock()
+    """Callback mock for Save button — returns None (success) by default."""
+    cb = MagicMock()
+    cb.return_value = None
+    return cb
 
 
 @pytest.fixture
@@ -100,11 +124,9 @@ class TestSettingsWindowLifecycle:
 class TestSettingsWindowReuse:
     def test_repeated_show_does_not_create_new_window(self, settings_window, mock_tk, mocker):
         """Calling show() twice must reuse the existing window, not create a second one."""
-        # Patch threading so show() calls _build_and_run synchronously
         mocker.patch("audiby.ui.settings_window.threading.Thread")
         _open_window(settings_window)
 
-        # Simulate the GUI thread still being alive
         mock_thread = MagicMock()
         mock_thread.is_alive.return_value = True
         settings_window._gui_thread = mock_thread
@@ -123,7 +145,6 @@ class TestSettingsWindowReuse:
         """Calling show() on an existing window must bring it to the front."""
         _open_window(settings_window)
 
-        # Simulate the GUI thread still being alive
         mock_thread = MagicMock()
         mock_thread.is_alive.return_value = True
         settings_window._gui_thread = mock_thread
@@ -150,13 +171,13 @@ class TestSettingsWindowDestroy:
 
     def test_destroy_is_safe_when_no_window(self, settings_window):
         """destroy() must not raise if no window was ever created."""
-        settings_window.destroy()  # should not raise
+        settings_window.destroy()
 
     def test_destroy_is_idempotent(self, settings_window, mock_tk):
         """Calling destroy() twice must not raise."""
         _open_window(settings_window)
         settings_window.destroy()
-        settings_window.destroy()  # second call — no error
+        settings_window.destroy()
 
 
 # ---------------------------------------------------------------------------
@@ -172,19 +193,9 @@ class TestHotkeyDisplay:
         mock_config.get.assert_any_call("push_to_talk_key", "ctrl+space")
 
     def test_show_displays_current_hotkey_value(self, settings_window, mock_config, mock_tk):
-        """The hotkey display must reflect the config value, not a hardcoded default."""
-        mock_config.get.return_value = "alt+z"
+        """The hotkey display must reflect the config value."""
         _open_window(settings_window)
-
-        # The StringVar or Label should be set with the config value "alt+z"
-        stringvar = mock_tk["StringVar"].return_value
-        # StringVar.set() should be called with the config value
-        set_calls = [c for c in stringvar.method_calls if c[0] == "set"]
-        found = any("alt+z" in str(c) for c in set_calls)
-        assert found, (
-            f"Expected hotkey 'alt+z' to be displayed via StringVar.set(). "
-            f"StringVar calls: {stringvar.method_calls}"
-        )
+        assert settings_window._bind_hotkey.get() == "ctrl+space"
 
 
 class TestHotkeyCapture:
@@ -197,10 +208,7 @@ class TestHotkeyCapture:
 
         settings_window._on_hotkey_captured("ctrl+z")
 
-        stringvar = mock_tk["StringVar"].return_value
-        assert stringvar.get() == "ctrl+z", (
-            f"Expected display to show 'ctrl+z' after capture, got: {stringvar.get()}"
-        )
+        assert settings_window._bind_hotkey.get() == "ctrl+z"
 
 
 class TestHotkeyValidation:
@@ -210,100 +218,136 @@ class TestHotkeyValidation:
         """When an invalid hotkey is entered, an error message must be displayed."""
         mock_parse = mocker.patch("audiby.ui.settings_window.HotKey.parse",
                                   side_effect=ValueError("invalid combo"))
-
         _open_window(settings_window)
-
-        if hasattr(settings_window, '_on_hotkey_captured'):
-            settings_window._on_hotkey_captured("not_a_key+++")
-        elif hasattr(settings_window, '_validate_and_stage_hotkey'):
-            settings_window._validate_and_stage_hotkey("not_a_key+++")
-        else:
-            pytest.fail(
-                "SettingsWindow must expose _on_hotkey_captured() or "
-                "_validate_and_stage_hotkey() for testing hotkey validation"
-            )
-
+        settings_window._on_hotkey_captured("not_a_key+++")
         mock_parse.assert_called_once()
 
     def test_valid_hotkey_hides_error_label(self, settings_window, mock_config, mock_tk, mocker):
         """When a valid hotkey is entered, any error message must be hidden."""
         mock_parse = mocker.patch("audiby.ui.settings_window.HotKey.parse")
-
         _open_window(settings_window)
-
-        if hasattr(settings_window, '_on_hotkey_captured'):
-            settings_window._on_hotkey_captured("ctrl+shift+d")
-        elif hasattr(settings_window, '_validate_and_stage_hotkey'):
-            settings_window._validate_and_stage_hotkey("ctrl+shift+d")
-        else:
-            pytest.fail(
-                "SettingsWindow must expose _on_hotkey_captured() or "
-                "_validate_and_stage_hotkey() for testing hotkey validation"
-            )
-
+        settings_window._on_hotkey_captured("ctrl+shift+d")
         mock_parse.assert_called_once()
 
     def test_invalid_hotkey_does_not_stage_for_save(self, settings_window, mock_config, mock_tk, mocker):
-        """An invalid hotkey must NOT be staged — Save should persist the original value."""
+        """An invalid hotkey must NOT be staged — display must restore previous value."""
         mocker.patch("audiby.ui.settings_window.HotKey.parse",
                      side_effect=ValueError("bad"))
-
         _open_window(settings_window)
 
         settings_window._pre_capture_value = "ctrl+space"
-        if hasattr(settings_window, '_on_hotkey_captured'):
-            settings_window._on_hotkey_captured("bad+++key")
-        elif hasattr(settings_window, '_validate_and_stage_hotkey'):
-            settings_window._validate_and_stage_hotkey("bad+++key")
+        settings_window._on_hotkey_captured("bad+++key")
 
-        # config.set should NOT have been called with the bad value
-        set_calls = [c for c in mock_config.set.call_args_list
-                     if len(c.args) >= 2 and c.args[1] == "bad+++key"]
-        assert len(set_calls) == 0, "Invalid hotkey was staged in config"
-        # Display must be restored to the original hotkey
-        stringvar = mock_tk["StringVar"].return_value
-        assert stringvar.get() == "ctrl+space", (
-            f"Expected display restored to 'ctrl+space' after invalid capture, got: {stringvar.get()}"
-        )
+        assert settings_window._bind_hotkey.get() == "ctrl+space"
 
+
+# ---------------------------------------------------------------------------
+# Autostart checkbox
+# ---------------------------------------------------------------------------
+
+class TestAutostartCheckbox:
+    """Story 3.4 AC #1: Start on boot checkbox bound to config state."""
+
+    def test_show_reads_autostart_from_config(self, settings_window, mock_config, mock_tk):
+        """On show(), the autostart checkbox must read from config."""
+        _open_window(settings_window)
+        mock_config.get.assert_any_call("start_on_boot", False)
+
+    def test_autostart_default_is_false(self, settings_window, mock_config, mock_tk):
+        """Autostart defaults to unchecked when config returns False."""
+        _open_window(settings_window)
+        assert settings_window._autostart_value.get() is False
+
+    def test_autostart_reflects_config_true(self, mock_tk, mock_on_save):
+        """If config says autostart=True, the checkbox must be checked on open."""
+        cfg = MagicMock()
+        cfg.get.side_effect = lambda key, default=None: {
+            "push_to_talk_key": "ctrl+space",
+            "start_on_boot": True,
+            "model_size": "base",
+        }.get(key, default)
+
+        from audiby.ui.settings_window import SettingsWindow
+        sw = SettingsWindow(config=cfg, on_save=mock_on_save)
+        _open_window(sw)
+        assert sw._autostart_value.get() is True
+
+
+# ---------------------------------------------------------------------------
+# Model selector
+# ---------------------------------------------------------------------------
+
+class TestModelSelector:
+    """Story 3.4 AC #2: Model selector populated from SUPPORTED_MODELS."""
+
+    def test_show_reads_model_from_config(self, settings_window, mock_config, mock_tk):
+        """On show(), the model selector must read from config."""
+        _open_window(settings_window)
+        mock_config.get.assert_any_call("model_size", "base")
+
+    def test_model_default_is_base(self, settings_window, mock_config, mock_tk):
+        """Model selector defaults to 'base' from config."""
+        _open_window(settings_window)
+        assert settings_window._model_value.get() == "base"
+
+    def test_model_reflects_config_value(self, mock_tk, mock_on_save):
+        """If config says model=medium, the selector must show medium on open."""
+        cfg = MagicMock()
+        cfg.get.side_effect = lambda key, default=None: {
+            "push_to_talk_key": "ctrl+space",
+            "start_on_boot": False,
+            "model_size": "medium",
+        }.get(key, default)
+
+        from audiby.ui.settings_window import SettingsWindow
+        sw = SettingsWindow(config=cfg, on_save=mock_on_save)
+        _open_window(sw)
+        assert sw._model_value.get() == "medium"
+
+
+# ---------------------------------------------------------------------------
+# Save button — batch save flow
+# ---------------------------------------------------------------------------
 
 class TestSaveButton:
-    """AC #3: Save persists config and triggers on_save callback."""
+    """AC #3: Save passes all staged values to callback."""
 
-    def test_save_persists_config(self, settings_window, mock_config, mock_on_save, mock_tk, mocker):
-        """Clicking Save must call config.set(), config.save(), and on_save callback."""
+    def test_save_passes_all_values_to_callback(self, settings_window, mock_config, mock_on_save, mock_tk, mocker):
+        """Clicking Save must pass hotkey, autostart, and model to the on_save callback."""
         mocker.patch("audiby.ui.settings_window.HotKey.parse")
-
         _open_window(settings_window)
 
-        # Stage a valid hotkey
-        if hasattr(settings_window, '_on_hotkey_captured'):
-            settings_window._on_hotkey_captured("alt+z")
-        elif hasattr(settings_window, '_validate_and_stage_hotkey'):
-            settings_window._validate_and_stage_hotkey("alt+z")
+        settings_window._on_hotkey_captured("alt+z")
+        settings_window._on_save_clicked()
 
-        # Trigger save
-        if hasattr(settings_window, '_on_save_clicked'):
-            settings_window._on_save_clicked()
-        else:
-            pytest.fail("SettingsWindow must expose _on_save_clicked() for testing Save")
+        mock_on_save.assert_called_once_with("alt+z", False, "base")
 
-        mock_config.set.assert_any_call("push_to_talk_key", "alt+z")
-        mock_config.save.assert_called_once()
-        mock_on_save.assert_called_once()
-        assert settings_window._window is None, "Window must close after Save is clicked"
-
-    def test_save_without_changes_still_persists(self, settings_window, mock_config, mock_on_save, mock_tk):
-        """Save with no hotkey change should still persist current config and call callback."""
+    def test_save_closes_window_on_success(self, settings_window, mock_config, mock_on_save, mock_tk):
+        """Window must close after successful save (callback returns None)."""
         _open_window(settings_window)
+        settings_window._on_save_clicked()
+        assert settings_window._window is None
 
-        if hasattr(settings_window, '_on_save_clicked'):
-            settings_window._on_save_clicked()
-        else:
-            pytest.fail("SettingsWindow must expose _on_save_clicked() for testing Save")
+    def test_save_shows_error_on_failure(self, settings_window, mock_config, mock_on_save, mock_tk):
+        """Window must stay open and show error when callback returns error string."""
+        mock_on_save.return_value = "Autostart failed"
+        _open_window(settings_window)
+        settings_window._on_save_clicked()
+        # Window should still be open
+        assert settings_window._window is not None
 
-        mock_config.save.assert_called_once()
-        mock_on_save.assert_called_once()
+    def test_save_does_not_persist_config_directly(self, settings_window, mock_config, mock_on_save, mock_tk):
+        """Settings window must NOT call config.set() or config.save() — orchestrator owns that."""
+        _open_window(settings_window)
+        settings_window._on_save_clicked()
+        mock_config.set.assert_not_called()
+        mock_config.save.assert_not_called()
+
+    def test_save_without_changes_still_calls_callback(self, settings_window, mock_config, mock_on_save, mock_tk):
+        """Save with no changes should still invoke the callback with current values."""
+        _open_window(settings_window)
+        settings_window._on_save_clicked()
+        mock_on_save.assert_called_once_with("ctrl+space", False, "base")
 
 
 # ---------------------------------------------------------------------------
@@ -339,10 +383,7 @@ class TestReservedModifierRejection:
 
         settings_window._on_reserved_modifier_rejected()
 
-        stringvar = mock_tk["StringVar"].return_value
-        assert stringvar.get() == "ctrl+space", (
-            f"Expected display restored to 'ctrl+space', got: {stringvar.get()}"
-        )
+        assert settings_window._bind_hotkey.get() == "ctrl+space"
 
 
 # ---------------------------------------------------------------------------
@@ -353,17 +394,11 @@ class TestUnsavedChangesDiscard:
     """AC #5: Closing without Save discards changes; reopening shows original values."""
 
     def test_show_reloads_config_values(self, settings_window, mock_config, mock_tk):
-        """Each _build_and_run() must reload hotkey from config, discarding staged changes."""
-        mock_config.get.return_value = "ctrl+space"
+        """Each _build_and_run() must reload all values from config."""
         _open_window(settings_window)
-
-        # Simulate window closed
         settings_window._window = None
-
-        # Reopen
         _open_window(settings_window)
 
-        # config.get should be called on each open
         hotkey_get_calls = [
             c for c in mock_config.get.call_args_list
             if len(c.args) >= 1 and c.args[0] == "push_to_talk_key"
@@ -375,43 +410,18 @@ class TestUnsavedChangesDiscard:
     def test_staged_hotkey_discarded_on_reopen(self, settings_window, mock_config, mock_tk, mocker):
         """A staged but unsaved hotkey must be discarded when the window is reopened."""
         mocker.patch("audiby.ui.settings_window.HotKey.parse")
-        mock_config.get.return_value = "ctrl+space"
-
         _open_window(settings_window)
 
-        # Stage a new hotkey but don't save
-        if hasattr(settings_window, '_on_hotkey_captured'):
-            settings_window._on_hotkey_captured("alt+z")
-        elif hasattr(settings_window, '_validate_and_stage_hotkey'):
-            settings_window._validate_and_stage_hotkey("alt+z")
-
-        # Close window without saving
+        settings_window._on_hotkey_captured("alt+z")
         settings_window._window = None
-
-        # Reopen — should show original "ctrl+space", not staged "alt+z"
         _open_window(settings_window)
 
-        # The StringVar should be set back to the config value
-        stringvar = mock_tk["StringVar"].return_value
-        set_calls = [c for c in stringvar.method_calls if c[0] == "set"]
-        # Last set call should be "ctrl+space" (the config value on reopen)
-        last_set = set_calls[-1] if set_calls else None
-        assert last_set is not None, "StringVar.set() was never called on reopen"
-        assert "ctrl+space" in str(last_set), (
-            f"Expected 'ctrl+space' on reopen but got: {last_set}"
-        )
+        assert settings_window._bind_hotkey.get() == "ctrl+space"
 
     def test_config_not_modified_without_save(self, settings_window, mock_config, mock_tk, mocker):
         """Closing without Save must not call config.set() or config.save()."""
         mocker.patch("audiby.ui.settings_window.HotKey.parse")
-
         _open_window(settings_window)
-
-        # Stage a change
-        if hasattr(settings_window, '_on_hotkey_captured'):
-            settings_window._on_hotkey_captured("alt+z")
-        elif hasattr(settings_window, '_validate_and_stage_hotkey'):
-            settings_window._validate_and_stage_hotkey("alt+z")
-
-        # Close without saving — config should not have been persisted
+        settings_window._on_hotkey_captured("alt+z")
+        mock_config.set.assert_not_called()
         mock_config.save.assert_not_called()

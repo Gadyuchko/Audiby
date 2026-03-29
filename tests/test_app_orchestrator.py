@@ -2,7 +2,8 @@
 
 Tests validate pipeline wiring, queue/event initialization, thread creation,
 hotkey signal paths, sequential burst independence, worker exception recovery,
-and graceful shutdown. All component dependencies are mocked.
+graceful shutdown, and Story 3.4 settings apply (hotkey, autostart, model).
+All component dependencies are mocked.
 """
 
 import logging
@@ -85,12 +86,10 @@ class TestOrchestratorInit:
         """AudioRecorder, Transcriber, and TextInjector must receive the shared queues."""
         recorder_cls, transcriber_cls, injector_cls, _ = patch_components
 
-        # AudioRecorder gets audio_queue
         recorder_call_kwargs = recorder_cls.call_args
         assert orchestrator.audio_queue in recorder_call_kwargs.args or \
             recorder_call_kwargs.kwargs.get("audio_queue") is orchestrator.audio_queue
 
-        # TextInjector gets text_queue
         injector_call_kwargs = injector_cls.call_args
         assert orchestrator.text_queue in injector_call_kwargs.args or \
             injector_call_kwargs.kwargs.get("text_queue") is orchestrator.text_queue
@@ -205,13 +204,11 @@ class TestSequentialBursts:
 
         orchestrator.start()
         try:
-            # First burst
             orchestrator.on_hotkey_press()
             time.sleep(0.1)
             orchestrator.on_hotkey_release()
             time.sleep(0.1)
 
-            # Second burst
             orchestrator.on_hotkey_press()
             time.sleep(0.1)
             orchestrator.on_hotkey_release()
@@ -253,7 +250,6 @@ class TestWorkerRecovery:
             finally:
                 orchestrator.shutdown()
 
-        # Orchestrator must still be alive (not raised)
         assert any("device lost" in r.message or "AudioError" in r.message
                     for r in caplog.records)
 
@@ -308,13 +304,8 @@ class TestWorkerRecovery:
 
         orchestrator.start()
         try:
-            # Simulate audio arriving on queue
             orchestrator.audio_queue.put(np.zeros(1600, dtype="float32"))
-
-            # Give worker time to process
             time.sleep(0.3)
-
-            # Orchestrator must still be running
             assert not orchestrator.stop_event.is_set()
         finally:
             orchestrator.shutdown()
@@ -329,13 +320,8 @@ class TestWorkerRecovery:
 
         orchestrator.start()
         try:
-            # Simulate text arriving on queue
             orchestrator.text_queue.put("hello world")
-
-            # Give worker time to process
             time.sleep(0.3)
-
-            # Orchestrator must still be running
             assert not orchestrator.stop_event.is_set()
         finally:
             orchestrator.shutdown()
@@ -382,14 +368,13 @@ class TestShutdown:
         """Calling shutdown() twice must not raise."""
         orchestrator.start()
         orchestrator.shutdown()
-        orchestrator.shutdown()  # second call — no error
+        orchestrator.shutdown()
 
     def test_worker_threads_exit_after_shutdown(self, orchestrator):
         """Worker threads must terminate within a reasonable time after shutdown."""
         orchestrator.start()
         orchestrator.shutdown()
 
-        # Give threads time to notice stop_event
         time.sleep(0.5)
 
         thread_names = [t.name for t in threading.enumerate()]
@@ -403,7 +388,6 @@ class TestShutdown:
         _, transcriber_cls, _, _ = patch_components
         secret_text = "my secret medical information"
 
-        # Make transcriber put text on text_queue when transcribe is called
         def fake_transcribe(audio):
             orchestrator.text_queue.put(secret_text)
 
@@ -473,18 +457,18 @@ class TestTrayIntegration:
         orch = ApplicationOrchestrator(mock_config)
         orch.start()
         orch.shutdown()
-        orch.shutdown()  # second call — no error
+        orch.shutdown()
 
 
 # ---------------------------------------------------------------------------
-# Reinitialize_hotkey
+# Reinitialize hotkey (updated for Story 3.4 — takes hotkey param)
 # ---------------------------------------------------------------------------
 
 class TestReinitializeHotkey:
     """Tests for orchestrator hotkey re-registration without app restart."""
 
     def test_reinitialize_stops_old_manager(self, mock_config, patch_components, mocker):
-        """reinitialize_hotkey() must stop the current hotkey manager. (AC: #3)"""
+        """reinitialize_hotkey() must stop the current hotkey manager."""
         mocker.patch("audiby.app.TrayController")
         mocker.patch("audiby.app.SettingsWindow")
         _, _, _, hotkey_factory = patch_components
@@ -492,16 +476,12 @@ class TestReinitializeHotkey:
         old_manager = hotkey_factory.return_value
         orch = ApplicationOrchestrator(mock_config)
 
-        # Set new combo in config before reinitializing
-        mock_config.get.side_effect = lambda key, default=None: {
-            "push_to_talk_key": "alt+z",
-        }.get(key, default)
-        orch.reinitialize_hotkey()
+        orch.reinitialize_hotkey("ctrl+shift+a")
 
         old_manager.stop.assert_called_once()
 
     def test_reinitialize_creates_new_manager_with_new_combo(self, mock_config, patch_components, mocker):
-        """reinitialize_hotkey() must create a new manager with the combo from config. (AC: #3)"""
+        """reinitialize_hotkey() must create a new manager with the provided combo."""
         mocker.patch("audiby.app.TrayController")
         mocker.patch("audiby.app.SettingsWindow")
         _, _, _, hotkey_factory = patch_components
@@ -509,19 +489,14 @@ class TestReinitializeHotkey:
         orch = ApplicationOrchestrator(mock_config)
         initial_call_count = hotkey_factory.call_count
 
-        # Set new combo in config before reinitializing
-        mock_config.get.side_effect = lambda key, default=None: {
-            "push_to_talk_key": "alt+z",
-        }.get(key, default)
-        orch.reinitialize_hotkey()
+        orch.reinitialize_hotkey("ctrl+shift+a")
 
         assert hotkey_factory.call_count == initial_call_count + 1
-        # New manager created with "alt+z" from config
         last_call_args = hotkey_factory.call_args
-        assert last_call_args.args[0] == "alt+z" or last_call_args.kwargs.get("hotkey") == "alt+z"
+        assert last_call_args.args[0] == "ctrl+shift+a"
 
     def test_reinitialize_starts_new_manager(self, mock_config, patch_components, mocker):
-        """reinitialize_hotkey() must start the newly created manager. (AC: #3)"""
+        """reinitialize_hotkey() must start the newly created manager."""
         mocker.patch("audiby.app.TrayController")
         mocker.patch("audiby.app.SettingsWindow")
         _, _, _, hotkey_factory = patch_components
@@ -530,17 +505,13 @@ class TestReinitializeHotkey:
         hotkey_factory.side_effect = [hotkey_factory.return_value, new_manager]
 
         orch = ApplicationOrchestrator(mock_config)
-
-        mock_config.get.side_effect = lambda key, default=None: {
-            "push_to_talk_key": "alt+z",
-        }.get(key, default)
         hotkey_factory.side_effect = [new_manager]
-        orch.reinitialize_hotkey()
+        orch.reinitialize_hotkey("ctrl+shift+a")
 
         new_manager.start.assert_called_once()
 
     def test_reinitialize_failure_keeps_old_manager(self, mock_config, patch_components, mocker):
-        """If new hotkey registration fails, old manager must be restored. (AC: #4)"""
+        """If new hotkey registration fails, old manager must be restored."""
         mocker.patch("audiby.app.TrayController")
         mocker.patch("audiby.app.SettingsWindow")
         _, _, _, hotkey_factory = patch_components
@@ -552,26 +523,17 @@ class TestReinitializeHotkey:
         bad_manager.start.side_effect = HotkeyError("registration failed")
         restored_manager = MagicMock()
 
-        # __init__ gets old_manager, reinitialize gets bad_manager, fallback gets restored_manager
         hotkey_factory.side_effect = [old_manager, bad_manager, restored_manager]
 
         orch = ApplicationOrchestrator(mock_config)
+        result = orch.reinitialize_hotkey("bad+combo")
 
-        # Set bad combo in config
-        mock_config.get.side_effect = lambda key, default=None: {
-            "push_to_talk_key": "bad+combo",
-        }.get(key, default)
-        orch.reinitialize_hotkey()
-
-        # Should have attempted to restore original hotkey
         assert hotkey_factory.call_count == 3
         restored_manager.start.assert_called_once()
-        # Config must be restored in memory and persisted to disk (H2)
-        mock_config.set.assert_any_call("push_to_talk_key", "alt+z")
-        mock_config.save.assert_called()
+        assert result is not None  # error string returned
 
     def test_reinitialize_failure_logs_error(self, mock_config, patch_components, mocker, caplog):
-        """Failed hotkey re-registration must be logged. (AC: #4)"""
+        """Failed hotkey re-registration must be logged."""
         mocker.patch("audiby.app.TrayController")
         mocker.patch("audiby.app.SettingsWindow")
         _, _, _, hotkey_factory = patch_components
@@ -586,56 +548,251 @@ class TestReinitializeHotkey:
 
         orch = ApplicationOrchestrator(mock_config)
 
-        mock_config.get.side_effect = lambda key, default=None: {
-            "push_to_talk_key": "bad+combo",
-        }.get(key, default)
         with caplog.at_level(logging.ERROR, logger="audiby.app"):
-            orch.reinitialize_hotkey()
+            orch.reinitialize_hotkey("bad+combo")
 
         assert any("registration failed" in r.message or "HotkeyError" in r.message
                     for r in caplog.records)
 
-    def test_reinitialize_failure_persists_fallback_to_disk(self, mock_config, patch_components, mocker):
-        """Fallback to old hotkey after HotkeyError must call config.save() to persist to disk. (H2)"""
+    def test_reinitialize_returns_none_on_success(self, mock_config, patch_components, mocker):
+        """Successful hotkey reinit must return None."""
         mocker.patch("audiby.app.TrayController")
         mocker.patch("audiby.app.SettingsWindow")
+        _, _, _, hotkey_factory = patch_components
+
+        orch = ApplicationOrchestrator(mock_config)
+        result = orch.reinitialize_hotkey("ctrl+shift+a")
+
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# apply_settings — Story 3.4 orchestrator callback
+# ---------------------------------------------------------------------------
+
+class TestApplySettings:
+    """Tests for the orchestrator apply_settings callback used by SettingsWindow."""
+
+    def test_apply_settings_returns_none_on_full_success(self, mock_config, patch_components, mocker):
+        """All settings applied successfully → returns None."""
+        mocker.patch("audiby.app.TrayController")
+        mocker.patch("audiby.app.SettingsWindow")
+        mocker.patch("audiby.app.get_autostart")
+        _, _, _, hotkey_factory = patch_components
+
+        orch = ApplicationOrchestrator(mock_config)
+        result = orch.apply_settings("alt+z", False, "base")
+
+        assert result is None
+
+    def test_apply_settings_persists_config_on_success(self, mock_config, patch_components, mocker):
+        """Successful apply must call config.set() for each setting and config.save()."""
+        mocker.patch("audiby.app.TrayController")
+        mocker.patch("audiby.app.SettingsWindow")
+        mocker.patch("audiby.app.get_autostart")
+        _, _, _, hotkey_factory = patch_components
+
+        orch = ApplicationOrchestrator(mock_config)
+        orch.apply_settings("alt+z", False, "base")
+
+        mock_config.set.assert_any_call("push_to_talk_key", "alt+z")
+        mock_config.save.assert_called_once()
+
+    def test_apply_settings_returns_error_on_hotkey_failure(self, mock_config, patch_components, mocker):
+        """Hotkey failure → error string returned, other settings still attempted."""
+        mocker.patch("audiby.app.TrayController")
+        mocker.patch("audiby.app.SettingsWindow")
+        mocker.patch("audiby.app.get_autostart")
         _, _, _, hotkey_factory = patch_components
 
         from audiby.exceptions import HotkeyError
 
-        bad_manager = MagicMock()
-        bad_manager.start.side_effect = HotkeyError("registration failed")
-        hotkey_factory.side_effect = [MagicMock(), bad_manager, MagicMock()]
+        old_mgr = MagicMock()
+        bad_mgr = MagicMock()
+        bad_mgr.start.side_effect = HotkeyError("fail")
+        restored_mgr = MagicMock()
+        hotkey_factory.side_effect = [old_mgr, bad_mgr, restored_mgr]
 
         orch = ApplicationOrchestrator(mock_config)
-        mock_config.get.side_effect = lambda key, default=None: {
-            "push_to_talk_key": "bad+combo",
-        }.get(key, default)
-        orch.reinitialize_hotkey()
+        result = orch.apply_settings("bad+combo", False, "base")
 
-        mock_config.save.assert_called()
+        assert result is not None
+        assert "hotkey" in result.lower() or "Failed" in result
 
-    def test_reinitialize_unexpected_exception_logs_and_restores(self, mock_config, patch_components, mocker, caplog):
-        """Unexpected exception during hotkey init must be logged and old manager restored. (M2)"""
+    def test_apply_settings_returns_error_on_autostart_failure(self, mock_config, patch_components, mocker):
+        """Autostart failure → error string returned."""
         mocker.patch("audiby.app.TrayController")
         mocker.patch("audiby.app.SettingsWindow")
+        mock_autostart = mocker.patch("audiby.app.get_autostart")
+        mock_autostart.return_value.enable.side_effect = OSError("registry denied")
         _, _, _, hotkey_factory = patch_components
 
-        old_manager = MagicMock()
-        bad_manager = MagicMock()
-        bad_manager.start.side_effect = RuntimeError("unexpected failure")
-        restored_manager = MagicMock()
-        hotkey_factory.side_effect = [old_manager, bad_manager, restored_manager]
-
-        orch = ApplicationOrchestrator(mock_config)
+        # Config returns autostart=False so new value True triggers the change
         mock_config.get.side_effect = lambda key, default=None: {
-            "push_to_talk_key": "ctrl+z",
+            "model_size": "base",
+            "push_to_talk_key": "alt+z",
+            "start_on_boot": False,
         }.get(key, default)
 
-        with caplog.at_level(logging.ERROR, logger="audiby.app"):
-            orch.reinitialize_hotkey()
+        orch = ApplicationOrchestrator(mock_config)
+        result = orch.apply_settings("alt+z", True, "base")
 
-        assert any("unexpected" in r.message.lower() or "RuntimeError" in r.message
-                    for r in caplog.records)
-        restored_manager.start.assert_called_once()
-        mock_config.save.assert_called()
+        assert result is not None
+        assert "autostart" in result.lower()
+
+
+# ---------------------------------------------------------------------------
+# set_model — Story 3.4 model switching
+# ---------------------------------------------------------------------------
+
+class TestSetModel:
+    """Tests for model switching in the orchestrator."""
+
+    def test_no_op_when_model_unchanged(self, mock_config, patch_components, mocker):
+        """If selected model matches active model, skip reload. (AC: 2.4)"""
+        mocker.patch("audiby.app.TrayController")
+        mocker.patch("audiby.app.SettingsWindow")
+        _, transcriber_cls, _, _ = patch_components
+
+        orch = ApplicationOrchestrator(mock_config)
+        initial_transcriber = orch._transcriber
+        result = orch.set_model("base")
+
+        assert result is None
+        # Transcriber should NOT have been recreated
+        assert orch._transcriber is initial_transcriber
+
+    def test_model_switch_recreates_transcriber(self, mock_config, patch_components, mocker):
+        """Switching to a downloaded model must create a new Transcriber. (AC: 2.3)"""
+        mocker.patch("audiby.app.TrayController")
+        mocker.patch("audiby.app.SettingsWindow")
+        mock_mm = mocker.patch("audiby.app.model_manager")
+        mock_mm.get_model_root.return_value = Path("/models")
+        _, transcriber_cls, _, _ = patch_components
+
+        orch = ApplicationOrchestrator(mock_config)
+        initial_count = transcriber_cls.call_count
+
+        # Model path exists (already downloaded)
+        mocker.patch("pathlib.Path.exists", return_value=True)
+        result = orch.set_model("medium")
+
+        assert result is None
+        assert transcriber_cls.call_count > initial_count
+
+    def test_model_switch_rollback_on_transcriber_failure(self, mock_config, patch_components, mocker):
+        """Failed Transcriber creation must roll back to the old transcriber. (AC: 2.3, 4)"""
+        mocker.patch("audiby.app.TrayController")
+        mocker.patch("audiby.app.SettingsWindow")
+        mock_mm = mocker.patch("audiby.app.model_manager")
+        mock_mm.get_model_root.return_value = Path("/models")
+        _, transcriber_cls, _, _ = patch_components
+
+        old_transcriber = MagicMock()
+        transcriber_cls.return_value = old_transcriber
+
+        orch = ApplicationOrchestrator(mock_config)
+        # Now make the next Transcriber() call fail
+        transcriber_cls.side_effect = RuntimeError("load failed")
+        mocker.patch("pathlib.Path.exists", return_value=True)
+        result = orch.set_model("medium")
+
+        assert result is not None
+        assert orch._transcriber is old_transcriber
+
+    def test_model_not_downloaded_returns_error(self, mock_config, patch_components, mocker):
+        """If model path doesn't exist, set_model must return error without creating Transcriber."""
+        mocker.patch("audiby.app.TrayController")
+        mocker.patch("audiby.app.SettingsWindow")
+        mock_mm = mocker.patch("audiby.app.model_manager")
+        mock_mm.get_model_root.return_value = Path("/models")
+        _, transcriber_cls, _, _ = patch_components
+
+        orch = ApplicationOrchestrator(mock_config)
+        initial_count = transcriber_cls.call_count
+        mocker.patch("pathlib.Path.exists", return_value=False)
+        result = orch.set_model("large-v3")
+
+        assert result is not None
+        assert transcriber_cls.call_count == initial_count
+
+
+# ---------------------------------------------------------------------------
+# set_autostart — Story 3.4 autostart toggle
+# ---------------------------------------------------------------------------
+
+class TestSetAutostart:
+    """Tests for autostart enable/disable in the orchestrator."""
+
+    def test_no_op_when_autostart_unchanged(self, mock_config, patch_components, mocker):
+        """If autostart value matches config, skip platform call."""
+        mocker.patch("audiby.app.TrayController")
+        mocker.patch("audiby.app.SettingsWindow")
+        mock_get_autostart = mocker.patch("audiby.app.get_autostart")
+
+        mock_config.get.side_effect = lambda key, default=None: {
+            "model_size": "base",
+            "push_to_talk_key": "alt+z",
+            "start_on_boot": False,
+        }.get(key, default)
+
+        orch = ApplicationOrchestrator(mock_config)
+        result = orch.set_autostart(False)
+
+        assert result is None
+        mock_get_autostart.assert_not_called()
+
+    def test_enable_autostart_calls_platform(self, mock_config, patch_components, mocker):
+        """Enabling autostart must call get_autostart().enable()."""
+        mocker.patch("audiby.app.TrayController")
+        mocker.patch("audiby.app.SettingsWindow")
+        mock_get_autostart = mocker.patch("audiby.app.get_autostart")
+
+        mock_config.get.side_effect = lambda key, default=None: {
+            "model_size": "base",
+            "push_to_talk_key": "alt+z",
+            "start_on_boot": False,
+        }.get(key, default)
+
+        orch = ApplicationOrchestrator(mock_config)
+        result = orch.set_autostart(True)
+
+        assert result is None
+        mock_get_autostart.return_value.enable.assert_called_once()
+
+    def test_disable_autostart_calls_platform(self, mock_config, patch_components, mocker):
+        """Disabling autostart must call get_autostart().disable()."""
+        mocker.patch("audiby.app.TrayController")
+        mocker.patch("audiby.app.SettingsWindow")
+        mock_get_autostart = mocker.patch("audiby.app.get_autostart")
+
+        mock_config.get.side_effect = lambda key, default=None: {
+            "model_size": "base",
+            "push_to_talk_key": "alt+z",
+            "start_on_boot": True,
+        }.get(key, default)
+
+        orch = ApplicationOrchestrator(mock_config)
+        result = orch.set_autostart(False)
+
+        assert result is None
+        mock_get_autostart.return_value.disable.assert_called_once()
+
+    def test_autostart_failure_returns_error(self, mock_config, patch_components, mocker):
+        """Platform autostart failure must return error string for UI display. (AC: 4)"""
+        mocker.patch("audiby.app.TrayController")
+        mocker.patch("audiby.app.SettingsWindow")
+        mock_get_autostart = mocker.patch("audiby.app.get_autostart")
+        mock_get_autostart.return_value.enable.side_effect = OSError("registry denied")
+
+        mock_config.get.side_effect = lambda key, default=None: {
+            "model_size": "base",
+            "push_to_talk_key": "alt+z",
+            "start_on_boot": False,
+        }.get(key, default)
+
+        orch = ApplicationOrchestrator(mock_config)
+        result = orch.set_autostart(True)
+
+        assert result is not None
+        assert "autostart" in result.lower()

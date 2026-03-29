@@ -1,10 +1,14 @@
 import logging
 import threading
 import tkinter as tk
+from tkinter import ttk
 
 from audiby.config import Config
 from collections.abc import Callable
-from audiby.constants import CONFIG_KEY_HOTKEY
+from audiby.constants import CONFIG_KEY_HOTKEY, CONFIG_KEY_AUTOSTART, DEFAULT_AUTOSTART, SUPPORTED_MODELS, \
+    CONFIG_KEY_MODEL, DEFAULT_MODEL_SIZE
+from audiby.core import model_manager
+from audiby.ui.download_dialog import DownloadDialog
 from pynput.keyboard import HotKey, Key, Listener as KeyboardListener
 
 logger = logging.getLogger(__name__)
@@ -24,12 +28,21 @@ class SettingsWindow:
                        Key.cmd, Key.cmd_l, Key.cmd_r}
     _CMD_WIN_KEYS = {Key.cmd, Key.cmd_l, Key.cmd_r}
 
-    def __init__(self, config: Config, on_save: Callable):
+    def __init__(self, config: Config, on_save: Callable[[], str | None]):
         self._config = config
         self._on_save = on_save
         self._hotkey_label = None
         self._hotkey_value = None
         self._bind_hotkey = None
+
+        self._autostart_label = None
+        self._autostart_checkbox = None
+        self._autostart_value = None
+
+        self._model_label = None
+        self._model_value = None
+        self._model_dropdown = None
+
         self._capturing = False
         self._pressed_modifiers = set()
         self._key_listener = None
@@ -74,9 +87,15 @@ class SettingsWindow:
         self._hotkey_label = tk.Label(self._window, text="Hotkey:")
         self._hotkey_label.grid(row=0, column=0, padx=5, pady=5)
 
-        # read value from config and store in class variable
+        # read values from config and store in class variable
         self._bind_hotkey = tk.StringVar()
         self._bind_hotkey.set(self._config.get(CONFIG_KEY_HOTKEY, "ctrl+space"))
+
+        self._autostart_value = tk.BooleanVar()
+        self._autostart_value.set(self._config.get(CONFIG_KEY_AUTOSTART, DEFAULT_AUTOSTART))
+
+        self._model_value = tk.StringVar()
+        self._model_value.set(self._config.get(CONFIG_KEY_MODEL, DEFAULT_MODEL_SIZE))
 
         # hotkey display — click to start capturing a new combo
         self._hotkey_value = tk.Entry(self._window, textvariable=self._bind_hotkey, state="readonly")
@@ -86,9 +105,27 @@ class SettingsWindow:
         # error label for invalid hotkey
         self._error_label = tk.Label(self._window, text="", fg="red")
 
+        # autostart checkbox
+        self._autostart_label = tk.Label(self._window, text="Autostart:")
+        self._autostart_label.grid(row=1, column=0, padx=5, pady=5)
+        self._autostart_checkbox = tk.Checkbutton(self._window, variable=self._autostart_value)
+        self._autostart_checkbox.grid(row=1, column=1, padx=5, pady=5)
+
+        # model dropdown
+        self._model_label = tk.Label(self._window, text="Model:")
+        self._model_label.grid(row=2, column=0, padx=5, pady=5)
+        self._model_dropdown = ttk.Combobox(
+            self._window,
+            textvariable=self._model_value,
+            values=SUPPORTED_MODELS,
+            state="readonly"
+        )
+        self._model_dropdown.grid(row=2, column=1, padx=5, pady=5)
+        self._model_dropdown.bind('<<ComboboxSelected>>', self._on_model_selected)
+
         # save button
         self._save_button = tk.Button(self._window, text="Save", command=self._on_save_clicked)
-        self._save_button.grid(row=3, column=0, columnspan=2, pady=10)
+        self._save_button.grid(row=4, column=0, columnspan=2, pady=10)
 
         # position window near bottom-right (near system tray)
         self._window.update_idletasks()
@@ -112,6 +149,12 @@ class SettingsWindow:
             self._hotkey_label = None
             self._error_label = None
             self._save_button = None
+            self._autostart_label = None
+            self._autostart_checkbox = None
+            self._autostart_value = None
+            self._model_label = None
+            self._model_value = None
+            self._model_dropdown = None
             # quit() exits mainloop(), destroy() releases the window.
             # Both are needed in this order — calling destroy() alone leaves
             # mainloop() running and the GUI thread hangs indefinitely.
@@ -255,7 +298,7 @@ class SettingsWindow:
         if self._error_label is None:
             return
         self._error_label.config(text=message)
-        self._error_label.grid(row=1, column=0, columnspan=2)
+        self._error_label.grid(row=3, column=0, columnspan=2)
 
     def _on_reserved_modifier_rejected(self):
         """Reject combo using OS-reserved modifier — show error and restore display."""
@@ -266,10 +309,28 @@ class SettingsWindow:
             self._hotkey_value.config(state="readonly")
         self._stop_capture()
 
-    def _on_save_clicked(self):
+    def _on_model_selected(self, _event=None):
+        """Handle model combobox selection — download if model not available locally."""
+        selected = self._model_value.get()
+        if model_manager.exists(selected):
+            return
+
+        dialog = DownloadDialog(selected, parent=self._window)
+        dialog.run()
+
+        if not dialog.success:
+            self._show_error(f"Failed to download {selected} model.")
+            # revert selection to the previously configured model
+            previous = self._config.get(CONFIG_KEY_MODEL, DEFAULT_MODEL_SIZE)
+            self._model_value.set(previous)
+
+    def _on_save_clicked(self) -> str | None:
         new_hotkey = self._bind_hotkey.get()
-        logger.info("Saving hotkey configuration: %s", new_hotkey)
-        self._config.set(CONFIG_KEY_HOTKEY, new_hotkey)
-        self._config.save()
-        self._on_save()
+        autostart = self._autostart_value.get()
+        model = self._model_value.get()
+        logger.info("Saving new configuration: hotkey -> %s | autostart -> %s | model -> %s", new_hotkey, autostart, model)
+        error = self._on_save(new_hotkey, autostart, model)
+        if error:
+            self._show_error(error)
+            return
         self._on_close()
