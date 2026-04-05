@@ -1,4 +1,6 @@
+import ctypes
 import logging
+import sys
 import threading
 import tkinter as tk
 from tkinter import ttk
@@ -27,6 +29,10 @@ class SettingsWindow:
                        Key.shift, Key.shift_l, Key.shift_r,
                        Key.cmd, Key.cmd_l, Key.cmd_r}
     _CMD_WIN_KEYS = {Key.cmd, Key.cmd_l, Key.cmd_r}
+    _SPECIAL_KEY_TOKENS = {
+        "space", "tab", "enter", "esc", "backspace", "delete", "insert",
+        "home", "end", "page_up", "page_down", "left", "right", "up", "down",
+    }
 
     def __init__(self, config: Config, on_save: Callable[[str, bool, str], str | None]):
         self._config = config
@@ -51,6 +57,8 @@ class SettingsWindow:
         self._pre_capture_value = None
         self._window = None
         self._gui_thread = None
+        self._window_right_margin = 50
+        self._window_bottom_margin = 80
 
     def show(self):
         # pystray menu callbacks run on a background thread, but tkinter requires
@@ -103,7 +111,14 @@ class SettingsWindow:
         self._hotkey_value.bind('<Button-1>', self._start_capture)
 
         # error label for invalid hotkey
-        self._error_label = tk.Label(self._window, text="", fg="red")
+        self._error_label = tk.Label(
+            self._window,
+            text="",
+            fg="red",
+            justify="left",
+            anchor="w",
+            wraplength=260,
+        )
 
         # autostart checkbox
         self._autostart_label = tk.Label(self._window, text="Autostart:")
@@ -128,12 +143,7 @@ class SettingsWindow:
         self._save_button.grid(row=4, column=0, columnspan=2, pady=10)
 
         # position window near bottom-right (near system tray)
-        self._window.update_idletasks()
-        width = self._window.winfo_width()
-        height = self._window.winfo_height()
-        x = self._window.winfo_screenwidth() - width - 50
-        y = self._window.winfo_screenheight() - height - 80
-        self._window.geometry(f"+{x}+{y}")
+        self._position_window()
 
         self._hotkey_value.focus_set()
         self._window.mainloop()
@@ -238,13 +248,7 @@ class SettingsWindow:
         if any(k in self._pressed_modifiers for k in (Key.shift, Key.shift_l, Key.shift_r)):
             parts.append("shift")
 
-        # Get the key name
-        if hasattr(key, 'char') and key.char is not None:
-            parts.append(key.char.lower())
-        elif hasattr(key, 'name'):
-            parts.append(key.name.lower())
-        else:
-            parts.append(str(key).lower())
+        parts.append(self._resolve_key_token(key))
 
         key_combo = "+".join(parts)
 
@@ -257,13 +261,71 @@ class SettingsWindow:
         """pynput on_release callback — remove modifier from tracked set."""
         self._pressed_modifiers.discard(key)
 
+    @classmethod
+    def _resolve_key_token(cls, key) -> str:
+        """Resolve a printable key token from pynput key data."""
+        if hasattr(key, "name") and key.name:
+            name = key.name.lower()
+            if name in cls._SPECIAL_KEY_TOKENS:
+                return name
+
+        if hasattr(key, "char") and key.char is not None:
+            normalized_char = cls._normalize_char_token(key.char)
+            if normalized_char is not None:
+                return normalized_char
+
+        if hasattr(key, "vk") and isinstance(key.vk, int):
+            mapped = cls._map_virtual_key_to_char(key.vk)
+            if mapped is not None:
+                return mapped
+
+        return str(key).lower()
+
     @staticmethod
-    def _to_pynput_format(combo: str) -> str:
+    def _normalize_key_token(token: str) -> str:
+        """Normalize captured key tokens before pynput validation."""
+        normalized = token.strip().lower()
+        if len(normalized) >= 2 and normalized[0] == normalized[-1] and normalized[0] in {"'", '"'}:
+            normalized = normalized[1:-1]
+        return normalized
+
+    @classmethod
+    def _normalize_char_token(cls, token: str) -> str | None:
+        """Normalize raw char tokens emitted by pynput."""
+        if not token:
+            return None
+        if token.isprintable() and token not in {"\t", "\r", "\n"}:
+            return token.lower()
+        if len(token) == 1 and 1 <= ord(token) <= 26:
+            return chr(ord("a") + ord(token) - 1)
+        return None
+
+    @staticmethod
+    def _map_virtual_key_to_char(vk: int) -> str | None:
+        """Resolve a printable key from a Windows virtual-key code."""
+        if sys.platform != "win32":
+            return None
+        try:
+            mapped = ctypes.windll.user32.MapVirtualKeyW(vk, 2) & 0xFFFF
+        except Exception:
+            return None
+        if not mapped:
+            return None
+        character = chr(mapped)
+        if character.isprintable() and character not in {"\t", "\r", "\n"}:
+            return character.lower()
+        return None
+
+    @classmethod
+    def _to_pynput_format(cls, combo: str) -> str:
         """Convert 'ctrl+alt+z' to '<ctrl>+<alt>+z' for pynput validation."""
         parts = []
         for part in combo.split("+"):
-            token = part.strip().lower()
-            parts.append(f"<{token}>" if len(token) > 1 else token)
+            token = cls._normalize_key_token(part)
+            if len(token) > 1 or token in cls._SPECIAL_KEY_TOKENS:
+                parts.append(f"<{token}>")
+            else:
+                parts.append(token)
         return "+".join(parts)
 
     def _on_hotkey_captured(self, key_combo: str):
@@ -298,7 +360,19 @@ class SettingsWindow:
         if self._error_label is None:
             return
         self._error_label.config(text=message)
-        self._error_label.grid(row=3, column=0, columnspan=2)
+        self._error_label.grid(row=3, column=0, columnspan=2, sticky="ew", padx=5, pady=(0, 5))
+        self._position_window()
+
+    def _position_window(self) -> None:
+        """Keep the settings window anchored near the tray area."""
+        if self._window is None:
+            return
+        self._window.update_idletasks()
+        width = self._window.winfo_width()
+        height = self._window.winfo_height()
+        x = self._window.winfo_screenwidth() - width - self._window_right_margin
+        y = self._window.winfo_screenheight() - height - self._window_bottom_margin
+        self._window.geometry(f"+{x}+{y}")
 
     def _on_reserved_modifier_rejected(self):
         """Reject combo using OS-reserved modifier — show error and restore display."""

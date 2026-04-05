@@ -5,6 +5,8 @@ from pathlib import Path
 import pystray
 import PIL.Image as Image
 
+from audiby.constants import APP_NAME
+
 logger = logging.getLogger(__name__)
 _ROOT_PATH = Path(__file__).resolve().parent.parent.parent.parent
 
@@ -29,11 +31,16 @@ class TrayController:
         _icon_path = _ROOT_PATH / "assets" / "audiby_tray_icon.png"
         try:
 
-            self._tray_icon = pystray.Icon("Audiby", Image.open(_icon_path), menu=pystray.Menu(
-                pystray.MenuItem("Settings", self._on_settings_clicked),
-                pystray.MenuItem("Open Log Folder", self._on_open_log_folder_clicked),
-                pystray.MenuItem("Quit", self._on_quit_clicked),
-            ))
+            self._tray_icon = pystray.Icon(
+                APP_NAME,
+                Image.open(_icon_path),
+                title=APP_NAME,
+                menu=pystray.Menu(
+                    pystray.MenuItem("Settings", self._on_settings_clicked),
+                    pystray.MenuItem("Open Log Folder", self._on_open_log_folder_clicked),
+                    pystray.MenuItem("Quit", self._on_quit_clicked),
+                ),
+            )
 
         except FileNotFoundError:
             logger.error("Could not find audiby_tray_icon.png in path %s", _icon_path)
