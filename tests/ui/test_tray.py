@@ -66,6 +66,12 @@ class TestMenuConstruction:
         name = args[0] if args else kwargs.get("name", "")
         assert "audiby" in name.lower() or "Audiby" in name
 
+    def test_icon_created_with_hover_title(self, tray_controller, mock_pystray):
+        """pystray.Icon should expose the app name as the hover title."""
+        icon_cls, _, _ = mock_pystray
+        _, kwargs = icon_cls.call_args
+        assert kwargs["title"] == "Audiby"
+
     def test_menu_has_settings_item(self, tray_controller, mock_pystray):
         """Context menu must include a 'Settings' item."""
         _, _, item_cls = mock_pystray

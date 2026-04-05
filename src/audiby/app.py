@@ -8,6 +8,7 @@ import logging
 import queue
 import sys
 import threading
+import gc
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from queue import Queue
@@ -151,6 +152,9 @@ class ApplicationOrchestrator:
         self._stop_event = threading.Event()
         self._recording_event = threading.Event()
         self._audio_control_event = threading.Event()
+        # Re-entrant because model-switch helpers may touch the same shared transcriber
+        # state while another locked path is already in progress on this thread.
+        self._transcriber_lock = threading.RLock()
         self._transcriber_thread: threading.Thread | None = None
         self._injector_thread: threading.Thread | None = None
         self._audio_thread: threading.Thread | None = None
@@ -269,7 +273,12 @@ class ApplicationOrchestrator:
                 # no exception for a timeout window, we got audio -> transcribe
                 logger.debug("Transcriber received audio buffer (samples: %d)", len(audio))
                 try:
-                    self._transcriber.transcribe(audio)
+                    with self._transcriber_lock:
+                        transcriber = self._transcriber
+                    if transcriber is None:
+                        logger.warning("Transcriber unavailable during model switch; dropping audio buffer")
+                        continue
+                    transcriber.transcribe(audio)
 
                     # transcription successful, reset backoff
                     self._transcriber_failures = 0
@@ -281,7 +290,12 @@ class ApplicationOrchestrator:
                     if not should_retry:
                         break
                     try:
-                        self._transcriber = Transcriber(self._model_path, self._audio_queue, self._text_queue)
+                        with self._transcriber_lock:
+                            self._transcriber = Transcriber(
+                                self._model_path,
+                                self._audio_queue,
+                                self._text_queue,
+                            )
                     except Exception as exc:
                         logger.error("Transcriber recovery failed: %s: %s", type(exc).__name__, exc)
             except queue.Empty:
@@ -453,20 +467,47 @@ class ApplicationOrchestrator:
         if old_model == model:
             return None
 
-        old_transcriber = self._transcriber
-
         if not model_manager.exists(model):
             return f"Model {model} is not downloaded."
 
+        old_model_path = self._model_path
         model_path = model_manager.get_model_root() / model
-        self._model_path = model_path
+        self._release_transcriber()
         try:
-            self._transcriber = Transcriber(model_path, self._audio_queue, self._text_queue)
+            new_transcriber = Transcriber(model_path, self._audio_queue, self._text_queue)
         except Exception as e:
             logger.error("Failed to initialize transcriber: %s", e)
-            self._transcriber = old_transcriber
+            self._restore_transcriber(old_model_path)
             return f"Failed to initialize {model} model. Falling back to old one."
+        with self._transcriber_lock:
+            self._model_path = model_path
+            self._transcriber = new_transcriber
         return None
+
+    def _release_transcriber(self) -> None:
+        """Release the current transcriber before loading a replacement model."""
+        with self._transcriber_lock:
+            current = self._transcriber
+            self._transcriber = None
+        if current is not None:
+            del current
+            # Force cleanup before loading another model so we do not keep two large
+            # Whisper models in memory during a model switch.
+            gc.collect()
+
+    def _restore_transcriber(self, model_path: Path) -> None:
+        """Best-effort restoration of the previous transcriber after a failed swap."""
+        try:
+            restored = Transcriber(model_path, self._audio_queue, self._text_queue)
+        except Exception as exc:
+            logger.critical("Failed to restore previous transcriber: %s: %s", type(exc).__name__, exc)
+            with self._transcriber_lock:
+                self._model_path = model_path
+                self._transcriber = None
+            return
+        with self._transcriber_lock:
+            self._model_path = model_path
+            self._transcriber = restored
 
     def set_autostart(self, autostart: bool) -> str | None:
         """
