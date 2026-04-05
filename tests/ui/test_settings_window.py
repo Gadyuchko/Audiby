@@ -211,6 +211,40 @@ class TestHotkeyCapture:
 
         assert settings_window._bind_hotkey.get() == "ctrl+z"
 
+    def test_backtick_combo_is_normalized_for_validation(self, settings_window, mock_tk, mocker):
+        """Ctrl+` should validate cleanly through the pynput formatter."""
+        mock_parse = mocker.patch("audiby.ui.settings_window.HotKey.parse")
+        _open_window(settings_window)
+
+        settings_window._on_hotkey_captured("ctrl+`")
+
+        mock_parse.assert_called_once_with("<ctrl>+`")
+
+    def test_space_combo_uses_wrapped_special_key_format(self, settings_window, mock_tk, mocker):
+        """Special keys like space should be wrapped for pynput validation."""
+        mock_parse = mocker.patch("audiby.ui.settings_window.HotKey.parse")
+        _open_window(settings_window)
+
+        settings_window._on_hotkey_captured("ctrl+space")
+
+        mock_parse.assert_called_once_with("<ctrl>+<space>")
+
+    def test_control_character_letter_is_recovered_from_vk(self, settings_window):
+        """Ctrl-held letters should resolve to printable tokens instead of control glyphs."""
+        key = SimpleNamespace(char="\x18", name=None, vk=88)
+
+        token = settings_window._resolve_key_token(key)
+
+        assert token == "x"
+
+    def test_backtick_is_recovered_from_windows_vk(self, settings_window):
+        """OEM punctuation keys should resolve from vk when char is not usable."""
+        key = SimpleNamespace(char=None, name=None, vk=192)
+
+        token = settings_window._resolve_key_token(key)
+
+        assert token == "`"
+
 
 class TestHotkeyValidation:
     """AC #4: Invalid hotkey shows error and retains previous hotkey."""
@@ -240,6 +274,14 @@ class TestHotkeyValidation:
         settings_window._on_hotkey_captured("bad+++key")
 
         assert settings_window._bind_hotkey.get() == "ctrl+space"
+
+    def test_quoted_key_repr_is_unwrapped_before_validation(self, settings_window, mock_tk, mocker):
+        """Quoted key repr tokens should be normalized before parse."""
+        _open_window(settings_window)
+
+        formatted = settings_window._to_pynput_format("ctrl+'`'")
+
+        assert formatted == "<ctrl>+`"
 
 
 # ---------------------------------------------------------------------------
@@ -379,6 +421,19 @@ class TestSaveButton:
         _open_window(settings_window)
         settings_window._on_save_clicked()
         mock_on_save.assert_called_once_with("ctrl+space", False, "base")
+
+    def test_error_label_wraps_and_repositions_window(self, settings_window, mock_tk):
+        """Showing an error should wrap text and recompute anchored geometry."""
+        _open_window(settings_window)
+
+        settings_window._show_error(
+            "This is a long validation error that should wrap instead of pushing the window wider."
+        )
+
+        settings_window._error_label.grid.assert_called_with(
+            row=3, column=0, columnspan=2, sticky="ew", padx=5, pady=(0, 5)
+        )
+        assert mock_tk["Tk"].return_value.geometry.call_count >= 2
 
 
 # ---------------------------------------------------------------------------

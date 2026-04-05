@@ -681,7 +681,7 @@ class TestSetModel:
         assert transcriber_cls.call_count > initial_count
 
     def test_model_switch_rollback_on_transcriber_failure(self, mock_config, patch_components, mocker):
-        """Failed Transcriber creation must roll back to the old transcriber. (AC: 2.3, 4)"""
+        """Failed Transcriber creation must restore the previous model path. (AC: 2.3, 4)"""
         mocker.patch("audiby.app.TrayController")
         mocker.patch("audiby.app.SettingsWindow")
         mock_mm = mocker.patch("audiby.app.model_manager")
@@ -689,16 +689,31 @@ class TestSetModel:
         mock_mm.exists.return_value = True
         _, transcriber_cls, _, _ = patch_components
 
-        old_transcriber = MagicMock()
-        transcriber_cls.return_value = old_transcriber
-
         orch = ApplicationOrchestrator(mock_config)
-        # Now make the next Transcriber() call fail
-        transcriber_cls.side_effect = RuntimeError("load failed")
+        original_model_path = orch._model_path
+        restored_transcriber = MagicMock()
+        transcriber_cls.side_effect = [RuntimeError("load failed"), restored_transcriber]
         result = orch.set_model("medium")
 
         assert result is not None
-        assert orch._transcriber is old_transcriber
+        assert orch._model_path == original_model_path
+        assert orch._transcriber is restored_transcriber
+
+    def test_model_switch_releases_old_transcriber_before_loading_new_one(self, mock_config, patch_components, mocker):
+        """Large model swaps should drop the old transcriber before loading the replacement."""
+        mocker.patch("audiby.app.TrayController")
+        mocker.patch("audiby.app.SettingsWindow")
+        mock_mm = mocker.patch("audiby.app.model_manager")
+        mock_mm.get_model_root.return_value = Path("/models")
+        mock_mm.exists.return_value = True
+
+        orch = ApplicationOrchestrator(mock_config)
+        release_spy = mocker.spy(orch, "_release_transcriber")
+
+        result = orch.set_model("medium")
+
+        assert result is None
+        release_spy.assert_called_once()
 
     def test_model_not_downloaded_returns_error(self, mock_config, patch_components, mocker):
         """If model path doesn't exist, set_model must return error without creating Transcriber."""
