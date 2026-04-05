@@ -12,10 +12,12 @@ import pytest
 def mock_tk(mocker):
     """Mock tkinter so no real GUI window is created."""
     mock_tk_cls = mocker.patch("audiby.ui.download_dialog.tk.Tk")
+    mock_toplevel_cls = mocker.patch("audiby.ui.download_dialog.tk.Toplevel", create=True)
     mock_label_cls = mocker.patch("audiby.ui.download_dialog.ttk.Label", create=True)
     mock_progressbar_cls = mocker.patch("audiby.ui.download_dialog.ttk.Progressbar", create=True)
     return {
         "Tk": mock_tk_cls,
+        "Toplevel": mock_toplevel_cls,
         "Label": mock_label_cls,
         "Progressbar": mock_progressbar_cls,
     }
@@ -101,3 +103,46 @@ class TestDownloadDialogProgressBar:
         dialog.run()
 
         mock_tk["Progressbar"].return_value.start.assert_called_once()
+
+
+class TestDownloadDialogWithParent:
+    """L2: Toplevel branch — dialog created as child of an existing window."""
+
+    def test_toplevel_used_when_parent_provided(self, mock_tk, mock_model_manager):
+        """With a parent, dialog must use Toplevel instead of Tk."""
+        from audiby.ui.download_dialog import DownloadDialog
+        parent = MagicMock()
+        parent.wait_window.side_effect = lambda _: None
+        dialog = DownloadDialog("small", parent=parent)
+
+        dialog.run()
+
+        mock_tk["Toplevel"].assert_called_once_with(parent)
+        mock_tk["Tk"].assert_not_called()
+
+    def test_toplevel_grabs_focus(self, mock_tk, mock_model_manager):
+        """Toplevel dialog must call grab_set() to block parent interaction."""
+        from audiby.ui.download_dialog import DownloadDialog
+        parent = MagicMock()
+        parent.wait_window.side_effect = lambda _: None
+        dialog = DownloadDialog("small", parent=parent)
+
+        dialog.run()
+
+        mock_tk["Toplevel"].return_value.grab_set.assert_called_once()
+
+    def test_toplevel_success_on_download(self, mock_tk, mock_model_manager):
+        """Toplevel dialog must set success=True after successful download."""
+        from audiby.ui.download_dialog import DownloadDialog
+        parent = MagicMock()
+        parent.wait_window.side_effect = lambda _: None
+        mock_tk["Toplevel"].return_value.after.side_effect = lambda _, fn: fn()
+        mock_model_manager.download.return_value = None
+        dialog = DownloadDialog("small", parent=parent)
+
+        dialog.run()
+
+        import time
+        time.sleep(0.2)
+
+        assert dialog.success is True

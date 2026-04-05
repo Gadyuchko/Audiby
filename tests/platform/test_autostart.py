@@ -76,11 +76,17 @@ class TestWindowsAutostartDisable:
 
 
 class TestWindowsAutostartIsEnabled:
-    """Subtask 3.2: is_enabled() checks the Run registry value."""
+    """Subtask 3.2: is_enabled() checks the Run registry value against current exe."""
 
-    def test_is_enabled_returns_true_when_value_exists(self, autostart, mock_winreg):
-        mock_winreg.QueryValueEx.return_value = (r'"C:\audiby.exe"', 1)
+    def test_is_enabled_returns_true_when_value_matches_exe(self, autostart, mock_winreg, mocker):
+        import sys
+        exe = sys.executable
+        mock_winreg.QueryValueEx.return_value = (f'"{exe}"', 1)
         assert autostart.is_enabled() is True
+
+    def test_is_enabled_returns_false_when_value_is_stale_path(self, autostart, mock_winreg):
+        mock_winreg.QueryValueEx.return_value = (r'"C:\old\path\audiby.exe"', 1)
+        assert autostart.is_enabled() is False
 
     def test_is_enabled_returns_false_when_value_missing(self, autostart, mock_winreg):
         mock_winreg.OpenKey.return_value.__enter__ = MagicMock(return_value=MagicMock())
@@ -89,6 +95,7 @@ class TestWindowsAutostartIsEnabled:
         assert autostart.is_enabled() is False
 
     def test_is_enabled_opens_key_with_read_access(self, autostart, mock_winreg):
+        mock_winreg.QueryValueEx.return_value = (r'"C:\some\path"', 1)
         autostart.is_enabled()
         mock_winreg.OpenKey.assert_called_once_with(
             mock_winreg.HKEY_CURRENT_USER,

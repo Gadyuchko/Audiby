@@ -28,7 +28,7 @@ class SettingsWindow:
                        Key.cmd, Key.cmd_l, Key.cmd_r}
     _CMD_WIN_KEYS = {Key.cmd, Key.cmd_l, Key.cmd_r}
 
-    def __init__(self, config: Config, on_save: Callable[[], str | None]):
+    def __init__(self, config: Config, on_save: Callable[[str, bool, str], str | None]):
         self._config = config
         self._on_save = on_save
         self._hotkey_label = None
@@ -324,7 +324,7 @@ class SettingsWindow:
             previous = self._config.get(CONFIG_KEY_MODEL, DEFAULT_MODEL_SIZE)
             self._model_value.set(previous)
 
-    def _on_save_clicked(self) -> str | None:
+    def _on_save_clicked(self) -> None:
         new_hotkey = self._bind_hotkey.get()
         autostart = self._autostart_value.get()
         model = self._model_value.get()

@@ -384,7 +384,7 @@ class ApplicationOrchestrator:
         except Exception as e:
             logger.error("Failed to open logs folder: %s", e)
 
-    def apply_settings(self, hotkey : str, autostart: bool, model: str) -> str | None:
+    def apply_settings(self, hotkey: str, autostart: bool, model: str) -> str | None:
         """
         Applies settings such as the hotkey, autostart preference, and model configuration. This method validates
         the provided settings and updates the internal configuration. If any errors occur during validation or
@@ -420,11 +420,13 @@ class ApplicationOrchestrator:
         else:
             self._config.set(CONFIG_KEY_AUTOSTART, autostart)
 
-        self._config.save()
+        has_successful_change = not hotkey_error or not model_error or not autostart_error
+        if has_successful_change:
+            self._config.save()
+
         if errors_message:
             return errors_message
-        else:
-            return None
+        return None
 
     def set_model(self, model: str) -> str | None:
         """
@@ -487,7 +489,7 @@ class ApplicationOrchestrator:
             logger.error("Failed to set autostart: %s", e)
             return f"Failed to set autostart to {'enabled' if autostart else 'disabled'}."
 
-    def reinitialize_hotkey(self, hotkey:str)-> str | None:
+    def reinitialize_hotkey(self, hotkey: str) -> str | None:
         """
         Reinitializes the hotkey, attempting to set a new hotkey combination and handle fallback
         scenarios gracefully in case of failure.
