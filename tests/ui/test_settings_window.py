@@ -9,6 +9,7 @@ Note: Tests call _build_and_run() directly to bypass the threading layer,
 which is needed at runtime (pystray callbacks) but not testable with mocks.
 """
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch, call
 
 import pytest
@@ -303,6 +304,36 @@ class TestModelSelector:
         sw = SettingsWindow(config=cfg, on_save=mock_on_save)
         _open_window(sw)
         assert sw._model_value.get() == "medium"
+
+    def test_failed_download_reverts_selected_model(self, settings_window, mock_tk, mocker):
+        """Failed interactive download should revert the staged model selection."""
+        mocker.patch("audiby.ui.settings_window.model_manager.exists", return_value=False)
+        dialog_cls = mocker.patch("audiby.ui.settings_window.DownloadDialog")
+        dialog_cls.return_value.run.return_value = SimpleNamespace(
+            status="failed",
+            message="Failed to download the medium model.",
+        )
+        _open_window(settings_window)
+        settings_window._model_value.set("medium")
+
+        settings_window._on_model_selected()
+
+        assert settings_window._model_value.get() == "base"
+        settings_window._error_label.config.assert_called_with(
+            text="Failed to download the medium model."
+        )
+
+    def test_successful_download_keeps_selected_model(self, settings_window, mock_tk, mocker):
+        """Successful interactive download should keep the staged model selection."""
+        mocker.patch("audiby.ui.settings_window.model_manager.exists", return_value=False)
+        dialog_cls = mocker.patch("audiby.ui.settings_window.DownloadDialog")
+        dialog_cls.return_value.run.return_value = SimpleNamespace(status="success", message=None)
+        _open_window(settings_window)
+        settings_window._model_value.set("medium")
+
+        settings_window._on_model_selected()
+
+        assert settings_window._model_value.get() == "medium"
 
 
 # ---------------------------------------------------------------------------

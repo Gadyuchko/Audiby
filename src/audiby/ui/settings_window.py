@@ -316,10 +316,10 @@ class SettingsWindow:
             return
 
         dialog = DownloadDialog(selected, parent=self._window)
-        dialog.run()
+        result = dialog.run()
 
-        if not dialog.success:
-            self._show_error(f"Failed to download {selected} model.")
+        if result.status != "success":
+            self._show_error(result.message or f"Failed to download {selected} model.")
             # revert selection to the previously configured model
             previous = self._config.get(CONFIG_KEY_MODEL, DEFAULT_MODEL_SIZE)
             self._model_value.set(previous)

@@ -15,6 +15,7 @@ from typing import Tuple, Any
 
 from audiby.exceptions import HotkeyError
 from audiby.platform.shell import get_shell
+from audiby.ui.download_dialog import DownloadDialog
 from audiby.ui.settings_window import SettingsWindow
 from audiby.config import Config
 from audiby.constants import (
@@ -57,11 +58,12 @@ def run_app(config: Config) -> int:
         LOG_BACKUP_COUNT,
     )
 
-    # Bail early if the configured model hasn't been downloaded yet
     model_name = config.get(CONFIG_KEY_MODEL, DEFAULT_MODEL_SIZE)
     if not model_manager.exists(model_name):
-        logger.error("Model '%s' not found", model_name)
-        return 1
+        logger.warning("Model '%s' not found locally; prompting for download", model_name)
+        if not _ensure_startup_model_available(model_name):
+            logger.error("Startup aborted because model '%s' is still unavailable", model_name)
+            return 1
 
     app = ApplicationOrchestrator(config)
     try:
@@ -75,6 +77,12 @@ def run_app(config: Config) -> int:
     finally:
         app.shutdown()
     return 0
+
+
+def _ensure_startup_model_available(model_name: str) -> bool:
+    """Prompt for a missing startup model download before orchestrator boot."""
+    result = DownloadDialog(model_name).run()
+    return result.status == "success"
 
 
 def setup_logging(config: Config) -> Path:
@@ -445,12 +453,12 @@ class ApplicationOrchestrator:
         if old_model == model:
             return None
 
-        model_path = model_manager.get_model_root() / model
         old_transcriber = self._transcriber
 
-        if not model_path.exists():
+        if not model_manager.exists(model):
             return f"Model {model} is not downloaded."
 
+        model_path = model_manager.get_model_root() / model
         self._model_path = model_path
         try:
             self._transcriber = Transcriber(model_path, self._audio_queue, self._text_queue)

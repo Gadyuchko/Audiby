@@ -46,6 +46,17 @@ LOG_BACKUP_COUNT = 5
 LOG_DIRNAME = "logs"
 
 SUPPORTED_MODELS = ("tiny", "base", "small", "medium", "large-v3")
+MODEL_DISPLAY_SIZES = {
+    "tiny": "74 MB",
+    "base": "142 MB",
+    "small": "466 MB",
+    "medium": "1.5 GB",
+    "large-v3": "2.9 GB",
+}
+MODEL_DOWNLOAD_STATUS_MESSAGE = (
+    "This download runs in the background and may take a while depending on "
+    "model size and network speed."
+)
 
 # Transcription constants
 TRANSCRIPTION_BEAM_SIZE = 5

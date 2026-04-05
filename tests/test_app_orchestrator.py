@@ -11,12 +11,13 @@ import queue
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 
-from audiby.app import ApplicationOrchestrator
+from audiby.app import ApplicationOrchestrator, run_app
 from audiby.exceptions import AudioError, InjectionError, TranscriptionError
 
 
@@ -668,13 +669,12 @@ class TestSetModel:
         mocker.patch("audiby.app.SettingsWindow")
         mock_mm = mocker.patch("audiby.app.model_manager")
         mock_mm.get_model_root.return_value = Path("/models")
+        mock_mm.exists.return_value = True
         _, transcriber_cls, _, _ = patch_components
 
         orch = ApplicationOrchestrator(mock_config)
         initial_count = transcriber_cls.call_count
 
-        # Model path exists (already downloaded)
-        mocker.patch("pathlib.Path.exists", return_value=True)
         result = orch.set_model("medium")
 
         assert result is None
@@ -686,6 +686,7 @@ class TestSetModel:
         mocker.patch("audiby.app.SettingsWindow")
         mock_mm = mocker.patch("audiby.app.model_manager")
         mock_mm.get_model_root.return_value = Path("/models")
+        mock_mm.exists.return_value = True
         _, transcriber_cls, _, _ = patch_components
 
         old_transcriber = MagicMock()
@@ -694,7 +695,6 @@ class TestSetModel:
         orch = ApplicationOrchestrator(mock_config)
         # Now make the next Transcriber() call fail
         transcriber_cls.side_effect = RuntimeError("load failed")
-        mocker.patch("pathlib.Path.exists", return_value=True)
         result = orch.set_model("medium")
 
         assert result is not None
@@ -706,15 +706,64 @@ class TestSetModel:
         mocker.patch("audiby.app.SettingsWindow")
         mock_mm = mocker.patch("audiby.app.model_manager")
         mock_mm.get_model_root.return_value = Path("/models")
+        mock_mm.exists.return_value = False
         _, transcriber_cls, _, _ = patch_components
 
         orch = ApplicationOrchestrator(mock_config)
         initial_count = transcriber_cls.call_count
-        mocker.patch("pathlib.Path.exists", return_value=False)
         result = orch.set_model("large-v3")
 
         assert result is not None
         assert transcriber_cls.call_count == initial_count
+
+
+class TestRunAppStartupFallback:
+    """Tests for startup fallback when the configured model is missing."""
+
+    def test_missing_model_prompts_download_and_continues_boot(self, mocker, tmp_path):
+        """Startup should continue when the fallback download succeeds."""
+        config = MagicMock()
+        config.config_dir = tmp_path
+        config.get.side_effect = lambda key, default=None: {
+            "model_size": "medium",
+        }.get(key, default)
+
+        mocker.patch("audiby.app.setup_logging", return_value=tmp_path / "audiby.log")
+        mocker.patch("audiby.app.model_manager.exists", return_value=False)
+        dialog_cls = mocker.patch("audiby.app.DownloadDialog")
+        dialog_cls.return_value.run.return_value = SimpleNamespace(status="success")
+        app_cls = mocker.patch("audiby.app.ApplicationOrchestrator")
+
+        result = run_app(config)
+
+        assert result == 0
+        dialog_cls.assert_called_once_with("medium")
+        app_cls.return_value.start.assert_called_once()
+        app_cls.return_value.start_tray.assert_called_once()
+        app_cls.return_value.shutdown.assert_called_once()
+
+    def test_missing_model_returns_nonzero_when_download_declined_or_fails(self, mocker, tmp_path):
+        """Startup should stop cleanly when the fallback dialog does not succeed."""
+        config = MagicMock()
+        config.config_dir = tmp_path
+        config.get.side_effect = lambda key, default=None: {
+            "model_size": "medium",
+        }.get(key, default)
+
+        mocker.patch("audiby.app.setup_logging", return_value=tmp_path / "audiby.log")
+        mocker.patch("audiby.app.model_manager.exists", return_value=False)
+        dialog_cls = mocker.patch("audiby.app.DownloadDialog")
+        dialog_cls.return_value.run.return_value = SimpleNamespace(
+            status="failed",
+            message="Failed to download the medium model.",
+        )
+        app_cls = mocker.patch("audiby.app.ApplicationOrchestrator")
+
+        result = run_app(config)
+
+        assert result == 1
+        dialog_cls.assert_called_once_with("medium")
+        app_cls.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
