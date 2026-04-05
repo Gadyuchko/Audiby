@@ -22,7 +22,7 @@ def autostart(mock_winreg):
 
 
 class TestWindowsAutostartEnable:
-    """Subtask 3.1: enable() writes to the Run registry key."""
+    """enable() writes to the Run registry key."""
 
     def test_enable_opens_run_key_with_write_access(self, autostart, mock_winreg):
         autostart.enable("/path/to/audiby.exe")
@@ -41,7 +41,7 @@ class TestWindowsAutostartEnable:
         assert args[1] == "Audiby"
 
     def test_enable_quotes_exe_path(self, autostart, mock_winreg):
-        """Subtask 3.2: stored command line must be quoted for paths with spaces."""
+        """Stored command line must be quoted for paths with spaces."""
         autostart.enable(r"C:\Program Files\Audiby\audiby.exe")
         args = mock_winreg.SetValueEx.call_args.args
         stored_path = args[4]
@@ -58,7 +58,7 @@ class TestWindowsAutostartEnable:
 
 
 class TestWindowsAutostartDisable:
-    """Subtask 3.1: disable() removes the Run registry value."""
+    """disable() removes the Run registry value."""
 
     def test_disable_deletes_registry_value(self, autostart, mock_winreg):
         autostart.disable()
@@ -76,7 +76,7 @@ class TestWindowsAutostartDisable:
 
 
 class TestWindowsAutostartIsEnabled:
-    """Subtask 3.2: is_enabled() checks the Run registry value against current exe."""
+    """is_enabled() checks the Run registry value against current exe."""
 
     def test_is_enabled_returns_true_when_value_matches_exe(self, autostart, mock_winreg, mocker):
         import sys

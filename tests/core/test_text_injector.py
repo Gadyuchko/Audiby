@@ -71,7 +71,7 @@ def make_injector():
 
 
 # ---------------------------------------------------------------------------
-# Task 5.1 — Happy-path: text from queue → backup → paste → restore
+# Happy path: text from queue to backup, paste, and restore
 # ---------------------------------------------------------------------------
 
 class TestTextInjectorHappyPath:
@@ -146,7 +146,7 @@ class TestTextInjectorHappyPath:
 
 
 # ---------------------------------------------------------------------------
-# Task 5.2 — Clipboard always restored on injection failure
+# Clipboard is always restored on injection failure
 # ---------------------------------------------------------------------------
 
 class TestClipboardRestoreGuarantee:
@@ -209,7 +209,7 @@ class TestClipboardRestoreGuarantee:
 
 
 # ---------------------------------------------------------------------------
-# Task 5.3 — InjectionError raised/logged without terminating processing
+# InjectionError is raised and logged without terminating processing
 # ---------------------------------------------------------------------------
 
 class TestInjectionErrorHandling:
@@ -279,7 +279,7 @@ class TestInjectionErrorHandling:
 
 
 # ---------------------------------------------------------------------------
-# Task 5.4 — No transcribed text content in log messages (privacy)
+# No transcribed text content in log messages
 # ---------------------------------------------------------------------------
 
 class TestPrivacyGuardrail:
@@ -340,7 +340,7 @@ class TestPrivacyGuardrail:
 
 
 # ---------------------------------------------------------------------------
-# Task 5.5 — Multiple sequential injections handled independently
+# Multiple sequential injections are handled independently
 # ---------------------------------------------------------------------------
 
 class TestSequentialInjections:

@@ -186,7 +186,7 @@ class TestSettingsWindowDestroy:
 # ---------------------------------------------------------------------------
 
 class TestHotkeyDisplay:
-    """AC #1: Settings window shows the currently configured push-to-talk hotkey."""
+    """Settings window shows the currently configured push-to-talk hotkey."""
 
     def test_show_reads_hotkey_from_config(self, settings_window, mock_config, mock_tk):
         """On show(), the window must read the current hotkey from config."""
@@ -200,7 +200,7 @@ class TestHotkeyDisplay:
 
 
 class TestHotkeyCapture:
-    """AC #2: User can capture a new hotkey combination."""
+    """User can capture a new hotkey combination."""
 
     def test_captured_hotkey_updates_display(self, settings_window, mock_config, mock_tk, mocker):
         """When a new valid hotkey is captured, the display field must update."""
@@ -247,7 +247,7 @@ class TestHotkeyCapture:
 
 
 class TestHotkeyValidation:
-    """AC #4: Invalid hotkey shows error and retains previous hotkey."""
+    """Invalid hotkey shows an error and retains the previous hotkey."""
 
     def test_invalid_hotkey_shows_error_label(self, settings_window, mock_config, mock_tk, mocker):
         """When an invalid hotkey is entered, an error message must be displayed."""
@@ -289,7 +289,7 @@ class TestHotkeyValidation:
 # ---------------------------------------------------------------------------
 
 class TestAutostartCheckbox:
-    """Story 3.4 AC #1: Start on boot checkbox bound to config state."""
+    """Start on boot checkbox is bound to config state."""
 
     def test_show_reads_autostart_from_config(self, settings_window, mock_config, mock_tk):
         """On show(), the autostart checkbox must read from config."""
@@ -321,7 +321,7 @@ class TestAutostartCheckbox:
 # ---------------------------------------------------------------------------
 
 class TestModelSelector:
-    """Story 3.4 AC #2: Model selector populated from SUPPORTED_MODELS."""
+    """Model selector is populated from SUPPORTED_MODELS."""
 
     def test_show_reads_model_from_config(self, settings_window, mock_config, mock_tk):
         """On show(), the model selector must read from config."""
@@ -383,7 +383,7 @@ class TestModelSelector:
 # ---------------------------------------------------------------------------
 
 class TestSaveButton:
-    """AC #3: Save passes all staged values to callback."""
+    """Save passes all staged values to the callback."""
 
     def test_save_passes_all_values_to_callback(self, settings_window, mock_config, mock_on_save, mock_tk, mocker):
         """Clicking Save must pass hotkey, autostart, and model to the on_save callback."""
@@ -477,7 +477,7 @@ class TestReservedModifierRejection:
 # ---------------------------------------------------------------------------
 
 class TestUnsavedChangesDiscard:
-    """AC #5: Closing without Save discards changes; reopening shows original values."""
+    """Closing without Save discards changes and reopening shows original values."""
 
     def test_show_reloads_config_values(self, settings_window, mock_config, mock_tk):
         """Each _build_and_run() must reload all values from config."""

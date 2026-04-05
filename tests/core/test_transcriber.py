@@ -33,7 +33,7 @@ def _make_segment(text: str) -> MagicMock:
 
 
 # ---------------------------------------------------------------------------
-# Task 1.1 — Accept audio buffers and call WhisperModel.transcribe()
+# Accept audio buffers and call WhisperModel.transcribe()
 # ---------------------------------------------------------------------------
 
 class TestTranscriberInit:
@@ -141,7 +141,7 @@ class TestTranscribeCall:
 
 
 # ---------------------------------------------------------------------------
-# Task 1.2 — Join segment text, normalize whitespace, push to text queue
+# Join segment text, normalize whitespace, and push to the text queue
 # ---------------------------------------------------------------------------
 
 class TestTextNormalizationAndQueueOutput:
@@ -278,7 +278,7 @@ class TestTextNormalizationAndQueueOutput:
 
 
 # ---------------------------------------------------------------------------
-# Task 1.3 — Error handling: wrap exceptions, log metadata, stay recoverable
+# Error handling: wrap exceptions, log metadata, and stay recoverable
 # ---------------------------------------------------------------------------
 
 class TestTranscriptionErrorHandling:

@@ -1,6 +1,6 @@
 [project]
 name = "audiby"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local voice-to-text with push-to-talk and active window injection"
 readme = "README.md"
 authors = [

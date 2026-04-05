@@ -2,7 +2,7 @@
 
 Tests validate pipeline wiring, queue/event initialization, thread creation,
 hotkey signal paths, sequential burst independence, worker exception recovery,
-graceful shutdown, and Story 3.4 settings apply (hotkey, autostart, model).
+graceful shutdown, and settings apply (hotkey, autostart, model).
 All component dependencies are mocked.
 """
 
@@ -462,7 +462,7 @@ class TestTrayIntegration:
 
 
 # ---------------------------------------------------------------------------
-# Reinitialize hotkey (updated for Story 3.4 — takes hotkey param)
+# Reinitialize hotkey with updated combo
 # ---------------------------------------------------------------------------
 
 class TestReinitializeHotkey:
@@ -568,7 +568,7 @@ class TestReinitializeHotkey:
 
 
 # ---------------------------------------------------------------------------
-# apply_settings — Story 3.4 orchestrator callback
+# apply_settings orchestrator callback
 # ---------------------------------------------------------------------------
 
 class TestApplySettings:
@@ -643,14 +643,14 @@ class TestApplySettings:
 
 
 # ---------------------------------------------------------------------------
-# set_model — Story 3.4 model switching
+# set_model model switching
 # ---------------------------------------------------------------------------
 
 class TestSetModel:
     """Tests for model switching in the orchestrator."""
 
     def test_no_op_when_model_unchanged(self, mock_config, patch_components, mocker):
-        """If selected model matches active model, skip reload. (AC: 2.4)"""
+        """If the selected model matches the active model, skip reload."""
         mocker.patch("audiby.app.TrayController")
         mocker.patch("audiby.app.SettingsWindow")
         _, transcriber_cls, _, _ = patch_components
@@ -664,7 +664,7 @@ class TestSetModel:
         assert orch._transcriber is initial_transcriber
 
     def test_model_switch_recreates_transcriber(self, mock_config, patch_components, mocker):
-        """Switching to a downloaded model must create a new Transcriber. (AC: 2.3)"""
+        """Switching to a downloaded model must create a new Transcriber."""
         mocker.patch("audiby.app.TrayController")
         mocker.patch("audiby.app.SettingsWindow")
         mock_mm = mocker.patch("audiby.app.model_manager")
@@ -681,7 +681,7 @@ class TestSetModel:
         assert transcriber_cls.call_count > initial_count
 
     def test_model_switch_rollback_on_transcriber_failure(self, mock_config, patch_components, mocker):
-        """Failed Transcriber creation must restore the previous model path. (AC: 2.3, 4)"""
+        """Failed Transcriber creation must restore the previous model path."""
         mocker.patch("audiby.app.TrayController")
         mocker.patch("audiby.app.SettingsWindow")
         mock_mm = mocker.patch("audiby.app.model_manager")
@@ -782,7 +782,7 @@ class TestRunAppStartupFallback:
 
 
 # ---------------------------------------------------------------------------
-# set_autostart — Story 3.4 autostart toggle
+# set_autostart toggle
 # ---------------------------------------------------------------------------
 
 class TestSetAutostart:
@@ -843,7 +843,7 @@ class TestSetAutostart:
         mock_get_autostart.return_value.disable.assert_called_once()
 
     def test_autostart_failure_returns_error(self, mock_config, patch_components, mocker):
-        """Platform autostart failure must return error string for UI display. (AC: 4)"""
+        """Platform autostart failure must return an error string for UI display."""
         mocker.patch("audiby.app.TrayController")
         mocker.patch("audiby.app.SettingsWindow")
         mock_get_autostart = mocker.patch("audiby.app.get_autostart")

@@ -53,7 +53,7 @@ def tray_controller(mock_pystray, mock_image, callbacks):
 
 
 # ---------------------------------------------------------------------------
-# Menu construction and wiring (AC: #2)
+# Menu construction and wiring
 # ---------------------------------------------------------------------------
 
 class TestMenuConstruction:
@@ -101,7 +101,7 @@ class TestMenuConstruction:
 
 
 # ---------------------------------------------------------------------------
-# Callback dispatch (AC: #2, #3, #4)
+# Callback dispatch
 # ---------------------------------------------------------------------------
 
 class TestCallbackDispatch:
@@ -129,7 +129,7 @@ class TestCallbackDispatch:
 
 
 # ---------------------------------------------------------------------------
-# Lifecycle — start and stop (AC: #1, #4)
+# Lifecycle — start and stop
 # ---------------------------------------------------------------------------
 
 class TestLifecycle:
@@ -163,7 +163,7 @@ class TestLifecycle:
 
 
 # ---------------------------------------------------------------------------
-# Icon image loading failure (AC: #1)
+# Icon image loading failure
 # ---------------------------------------------------------------------------
 
 class TestIconLoadFailure:
