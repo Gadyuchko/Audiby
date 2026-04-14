@@ -117,9 +117,17 @@ def test_non_object_json_resets_to_defaults(tmp_path):
     assert data == DEFAULT_CONFIG
 
 
-def test_get_appdata_path_uses_local_dev_override_when_enabled(monkeypatch, tmp_path):
-    """Explicit dev flag uses repo-local temporary appdata folder."""
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("AUDIBY_DEV_APPDATA", "1")
+def test_get_appdata_path_uses_windows_appdata(monkeypatch, tmp_path):
+    """Windows path resolution composes from %APPDATA%."""
+    monkeypatch.setattr("audiby.config.sys.platform", "win32", raising=False)
+    monkeypatch.setenv("APPDATA", str(tmp_path / "Roaming"))
 
-    assert get_appdata_path() == (tmp_path / ".tmp-appdata" / APP_NAME)
+    assert get_appdata_path() == (tmp_path / "Roaming" / APP_NAME)
+
+
+def test_get_appdata_path_uses_non_windows_config_dir(monkeypatch, tmp_path):
+    """Non-Windows path resolution uses ~/.config/Audiby."""
+    monkeypatch.setattr("audiby.config.sys.platform", "linux", raising=False)
+    monkeypatch.setattr("audiby.config.Path.home", lambda: tmp_path)
+
+    assert get_appdata_path() == (tmp_path / ".config" / APP_NAME)
