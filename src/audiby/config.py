@@ -34,9 +34,6 @@ DEFAULT_CONFIG: dict = {
 
 def get_appdata_path() -> Path:
     """Resolve the application data directory for config storage."""
-    if os.environ.get("AUDIBY_DEV_APPDATA", "").lower() in {"1", "true", "yes", "on"}:
-        return (Path.cwd() / ".tmp-appdata" / APP_NAME)
-
     if sys.platform == "win32":
         base = Path(os.environ.get("APPDATA", str(Path.home())))
     else:
