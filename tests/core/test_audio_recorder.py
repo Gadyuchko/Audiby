@@ -11,7 +11,7 @@ import sounddevice as sd
 
 from audiby.constants import DEFAULT_SAMPLE_RATE
 from audiby.core.audio_recorder import AudioRecorder
-from audiby.exceptions import AudioError
+from audiby.exceptions import AudioDeviceError, AudioError, MicPermissionError
 
 
 # ---------------------------------------------------------------------------
@@ -175,15 +175,41 @@ class TestDefaultDevice:
 # ---------------------------------------------------------------------------
 
 class TestErrorHandling:
-    def test_port_audio_error_on_start_raises_audio_error(self, mocker):
-        """sounddevice.PortAudioError during start must raise AudioError."""
+    def test_permission_error_on_stream_open_raises_mic_permission_error(self, mocker):
+        """Permission-denied open failures must raise MicPermissionError with cause."""
+        original = sd.PortAudioError("Error opening InputStream: access denied")
         mocker.patch(
             "sounddevice.InputStream",
-            side_effect=sd.PortAudioError("device unavailable"),
+            side_effect=original,
         )
         recorder = AudioRecorder(audio_queue=queue.Queue())
-        with pytest.raises(AudioError):
+        with pytest.raises(MicPermissionError) as exc_info:
             recorder.start()
+        assert exc_info.value.__cause__ is original
+
+    def test_permission_error_on_stream_start_raises_mic_permission_error(self, mocker):
+        """Permission-denied start failures must raise MicPermissionError with cause."""
+        original = sd.PortAudioError("Microphone permission denied")
+        mock_stream = mocker.MagicMock()
+        mock_stream.start.side_effect = original
+        mocker.patch("sounddevice.InputStream", return_value=mock_stream)
+
+        recorder = AudioRecorder(audio_queue=queue.Queue())
+        with pytest.raises(MicPermissionError) as exc_info:
+            recorder.start()
+
+        assert exc_info.value.__cause__ is original
+        assert recorder._stream is None
+        mock_stream.close.assert_called_once()
+
+    def test_port_audio_error_on_start_raises_audio_device_error(self, mocker):
+        """Generic sounddevice.PortAudioError during start must raise AudioDeviceError."""
+        original = sd.PortAudioError("device unavailable")
+        mocker.patch("sounddevice.InputStream", side_effect=original)
+        recorder = AudioRecorder(audio_queue=queue.Queue())
+        with pytest.raises(AudioDeviceError) as exc_info:
+            recorder.start()
+        assert exc_info.value.__cause__ is original
 
     def test_port_audio_error_logged_with_metadata(self, mocker, caplog):
         """AudioError must be logged with device/state metadata, not audio content."""
@@ -217,7 +243,7 @@ class TestErrorHandling:
         mocker.patch("sounddevice.InputStream", return_value=mock_stream)
 
         recorder = AudioRecorder(audio_queue=queue.Queue(), device_id=4)
-        with pytest.raises(AudioError):
+        with pytest.raises(AudioDeviceError):
             recorder.start()
 
         assert not recorder._recording.is_set()
@@ -225,7 +251,7 @@ class TestErrorHandling:
         mock_stream.close.assert_called_once()
 
     def test_close_failure_is_wrapped_as_audio_error(self, mocker):
-        """PortAudioError from stream close must surface as AudioError."""
+        """PortAudioError from stream close remains generic AudioError during shutdown."""
         mock_stream = mocker.MagicMock()
         mock_stream.stop.side_effect = sd.PortAudioError("stop failed")
         mocker.patch("sounddevice.InputStream", return_value=mock_stream)

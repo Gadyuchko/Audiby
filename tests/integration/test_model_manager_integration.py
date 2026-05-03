@@ -21,9 +21,15 @@ _MODEL_BIN = "model.bin"
 def isolated_model_root(monkeypatch, tmp_path) -> Path:
     """Redirect model storage to a temp directory so real AppData is never touched."""
     fake_appdata = tmp_path / "Audiby"
+
+    def fake_models_dir() -> Path:
+        directory = fake_appdata / "models"
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory
+
     monkeypatch.setattr(
-        "audiby.core.model_manager.get_appdata_path",
-        lambda: fake_appdata,
+        "audiby.core.model_manager.models_dir",
+        fake_models_dir,
     )
     return fake_appdata
 

@@ -8,7 +8,7 @@ import sys
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from pynput.keyboard import HotKey, Listener
-from audiby.exceptions import HotkeyError
+from audiby.exceptions import HotkeyPermissionError
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ class HotkeyManagerBase(ABC):
         except Exception as e:
             logger.error("Failed to start hotkey listener: %s", e)
             self._listener = None
-            raise HotkeyError("Failed to start hotkey listener") from e
+            raise HotkeyPermissionError("Failed to start hotkey listener") from e
 
     def stop(self) -> None:
         """Stop the key listener if running. Safe to call when not started."""

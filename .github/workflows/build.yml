@@ -1,0 +1,99 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - master
+    tags:
+      - "v*.*.*"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact-name: audiby-windows
+            artifact-path: dist/Audiby.exe
+          - os: macos-latest
+            artifact-name: audiby-macos
+            artifact-path: dist/Audiby-macos.zip
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Build artifact
+        run: uv run python scripts/build.py
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: ${{ matrix.artifact-path }}
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: audiby-windows
+          path: release-artifacts
+
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: audiby-macos
+          path: release-artifacts
+
+      - name: Write release notes
+        run: |
+          cat > release-notes.md <<'EOF'
+          Audiby release artifacts are built from a clean GitHub Actions matrix.
+
+          Quickstart:
+          1. Download Audiby.exe on Windows or Audiby-macos.zip on macOS.
+          2. Open the app and allow the required OS permissions when prompted.
+          3. Hold the default push-to-talk hotkey, speak, then release to insert text.
+
+          Changelog:
+          - Build and attach Windows and macOS artifacts from GitHub Actions.
+          - Package the macOS app with ad-hoc codesign and ditto-preserved zip output.
+          EOF
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release-notes.md
+          files: |
+            release-artifacts/Audiby.exe
+            release-artifacts/Audiby-macos.zip

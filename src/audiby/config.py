@@ -2,13 +2,10 @@
 
 import json
 import logging
-import os
-import sys
 from pathlib import Path
 
 from audiby.constants import (
     ALT_NEUTRALIZATION_TAP_ALT,
-    APP_NAME,
     CONFIG_FILENAME,
     CONFIG_KEY_ALT_NEUTRALIZATION,
     CONFIG_KEY_AUDIO_DEVICE,
@@ -20,6 +17,7 @@ from audiby.constants import (
     DEFAULT_HOTKEY,
     DEFAULT_MODEL_SIZE,
 )
+from audiby.platform.paths import app_data_dir
 
 logger = logging.getLogger(__name__)
 
@@ -32,21 +30,12 @@ DEFAULT_CONFIG: dict = {
 }
 
 
-def get_appdata_path() -> Path:
-    """Resolve the application data directory for config storage."""
-    if sys.platform == "win32":
-        base = Path(os.environ.get("APPDATA", str(Path.home())))
-    else:
-        base = Path.home() / ".config"
-    return base / APP_NAME
-
-
 class Config:
     """Application configuration — load/save JSON settings."""
 
     def __init__(self, config_dir: Path | None = None) -> None:
         """Initialize config. If config_dir provided, use it (for testing)."""
-        self._config_dir = config_dir or get_appdata_path()
+        self._config_dir = config_dir if config_dir is not None else app_data_dir()
         self._config_path = self._config_dir / CONFIG_FILENAME
         self._data: dict = {}
         self._load()

@@ -1,9 +1,11 @@
 """Tests for the configuration system."""
 
 import json
+from pathlib import Path
 
-from audiby.config import APP_NAME, Config, DEFAULT_CONFIG, get_appdata_path
+from audiby.config import Config, DEFAULT_CONFIG
 from audiby.constants import (
+    APP_NAME,
     CONFIG_FILENAME,
     CONFIG_KEY_AUDIO_DEVICE,
     CONFIG_KEY_AUTOSTART,
@@ -28,6 +30,12 @@ def test_default_config_created(tmp_path):
     assert data[CONFIG_KEY_AUDIO_DEVICE] is None
     assert data[CONFIG_KEY_MODEL] == DEFAULT_MODEL_SIZE
     assert data[CONFIG_KEY_AUTOSTART] == DEFAULT_AUTOSTART
+
+
+def test_default_hotkey_remains_ctrl_space():
+    """Product default hotkey remains stable across platform path changes."""
+    assert DEFAULT_HOTKEY == "ctrl+space"
+    assert DEFAULT_CONFIG[CONFIG_KEY_HOTKEY] == "ctrl+space"
 
 
 def test_config_directory_creation(tmp_path):
@@ -117,17 +125,17 @@ def test_non_object_json_resets_to_defaults(tmp_path):
     assert data == DEFAULT_CONFIG
 
 
-def test_get_appdata_path_uses_windows_appdata(monkeypatch, tmp_path):
-    """Windows path resolution composes from %APPDATA%."""
-    monkeypatch.setattr("audiby.config.sys.platform", "win32", raising=False)
-    monkeypatch.setenv("APPDATA", str(tmp_path / "Roaming"))
+def test_config_defaults_to_app_data_dir_when_no_dir_provided(monkeypatch, tmp_path):
+    """Without explicit config_dir, Config resolves storage via platform.paths.app_data_dir()."""
+    fake_app_data = tmp_path / "AppData" / APP_NAME
 
-    assert get_appdata_path() == (tmp_path / "Roaming" / APP_NAME)
+    def fake_app_data_dir() -> Path:
+        fake_app_data.mkdir(parents=True, exist_ok=True)
+        return fake_app_data
 
+    monkeypatch.setattr("audiby.config.app_data_dir", fake_app_data_dir)
 
-def test_get_appdata_path_uses_non_windows_config_dir(monkeypatch, tmp_path):
-    """Non-Windows path resolution uses ~/.config/Audiby."""
-    monkeypatch.setattr("audiby.config.sys.platform", "linux", raising=False)
-    monkeypatch.setattr("audiby.config.Path.home", lambda: tmp_path)
+    config = Config()
 
-    assert get_appdata_path() == (tmp_path / ".config" / APP_NAME)
+    assert config.config_dir == fake_app_data
+    assert (fake_app_data / CONFIG_FILENAME).exists()

@@ -6,6 +6,9 @@ __all__ = [
     "TranscriptionError",
     "InjectionError",
     "HotkeyError",
+    "MicPermissionError",
+    "AudioDeviceError",
+    "HotkeyPermissionError",
     "ModelError",
 ]
 
@@ -18,6 +21,14 @@ class AudioError(AudibyError):
     """Audio-related error."""
 
 
+class MicPermissionError(AudioError):
+    """Microphone permission is missing or denied by the OS."""
+
+
+class AudioDeviceError(AudioError):
+    """Audio device is unavailable, disconnected, or otherwise unusable."""
+
+
 class TranscriptionError(AudibyError):
     """Speech transcription error."""
 
@@ -28,6 +39,10 @@ class InjectionError(AudibyError):
 
 class HotkeyError(AudibyError):
     """Global hotkey backend error."""
+
+
+class HotkeyPermissionError(HotkeyError):
+    """Global hotkey permissions are missing or denied by the OS."""
 
 
 class ModelError(AudibyError):

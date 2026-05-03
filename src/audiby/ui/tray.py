@@ -1,14 +1,13 @@
 import logging
 from collections.abc import Callable
-from pathlib import Path
 
 import pystray
 import PIL.Image as Image
 
 from audiby.constants import APP_NAME
+from audiby.resources import resource_path
 
 logger = logging.getLogger(__name__)
-_ROOT_PATH = Path(__file__).resolve().parent.parent.parent.parent
 
 class TrayController:
     """
@@ -28,7 +27,7 @@ class TrayController:
         self._on_settings = on_settings
         self._on_open_log = on_open_log_folder
         self._on_quit = on_quit
-        _icon_path = _ROOT_PATH / "assets" / "audiby_tray_icon.png"
+        _icon_path = resource_path("assets/audiby_tray_icon.png")
         try:
 
             self._tray_icon = pystray.Icon(

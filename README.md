@@ -1,12 +1,39 @@
-﻿# Audiby
+# Audiby
 
-Local voice-to-text with push-to-talk and active-window injection. Runs entirely on your machine: no cloud APIs, and no audio/text leaves your device.
+Local voice-to-text with push-to-talk and active-window injection. Audiby runs on your machine: no cloud APIs, no telemetry, and no audio or transcribed text leaves your device.
+
+## Download
+
+Download the latest release from GitHub:
+
+- Windows: `Audiby.exe`
+- macOS: `Audiby-macos.zip`
+
+Release artifacts are built by `.github/workflows/build.yml`. Pushes and pull requests validate the build matrix; version tags matching `v*.*.*` publish the GitHub Release artifacts.
+
+## Quickstart
+
+### Windows
+
+1. Download `Audiby.exe` from the latest GitHub Release.
+2. Double-click `Audiby.exe`.
+3. If Windows SmartScreen appears, click **More info** -> **Run anyway**.
+4. Allow microphone access if prompted.
+5. Hold `ctrl+space`, speak, then release. The transcribed text appears at your cursor.
+
+### macOS
+
+1. Download `Audiby-macos.zip` from the latest GitHub Release.
+2. Unzip it and open `Audiby.app`.
+3. If macOS blocks the app, right-click `Audiby.app` and choose **Open**.
+4. Allow Microphone and Input Monitoring permissions if prompted.
+5. Hold `ctrl+space`, speak, then release. The transcribed text appears at your cursor.
+
+Audiby v1.0 artifacts are unsigned. Windows may show SmartScreen, and macOS may show the standard unidentified-developer prompt.
 
 ## What It Does
 
-Hold a hotkey -> speak -> release -> transcribed text appears at your cursor in the active window. Powered by [faster-whisper](https://github.com/SYSTRAN/faster-whisper) for fast, offline transcription with automatic GPU usage when available.
-
-### How It Works
+Hold a hotkey, speak, release, and Audiby inserts the transcription into the active window.
 
 ```text
 Hotkey held -> Mic captures audio (16kHz mono)
@@ -18,113 +45,100 @@ Hotkey held -> Mic captures audio (16kHz mono)
    Text injected via clipboard paste into active window
 ```
 
-Audio is kept in memory only (never written to disk). Clipboard contents are backed up before injection and restored after.
+Audio is kept in memory only and is never written to disk. Clipboard contents are backed up before injection and restored after.
 
-## Tech Stack
+## Privacy
 
-- **Python 3.11-3.12** (3.13+ not supported due to CTranslate2 constraints)
-- **faster-whisper** - Whisper via CTranslate2 backend
-- **sounddevice** - audio capture
-- **pynput** - global hotkeys + paste simulation
-- **pystray + Pillow** - tray UI dependencies (future/full UI scope)
-- **tkinter** - settings UI dependencies (future/full UI scope)
-- **uv** - package manager
+- Audio stays local and in memory.
+- Transcribed text is used only for the active paste flow.
+- No telemetry, analytics, or phone-home behavior.
+- The default release artifact includes the base Whisper model, so first launch does not need a model download.
 
-## Getting Started
+## Uninstall
 
-### Prerequisites
+### Windows
 
-- Python 3.11 or 3.12
-- [uv](https://docs.astral.sh/uv/) package manager
+Delete `Audiby.exe`, then remove runtime data if you want a full cleanup:
 
-### Install & Run
+```text
+%APPDATA%\Audiby\
+```
+
+### macOS
+
+Delete `Audiby.app`, then remove runtime data if you want a full cleanup:
+
+```text
+~/Library/Application Support/Audiby/
+```
+
+## Runtime Data
+
+Audiby stores config, optional downloaded models, and logs in per-user app data:
+
+```text
+Windows:
+%APPDATA%\Audiby\
+  config.json
+  models\
+  logs\
+
+macOS:
+~/Library/Application Support/Audiby/
+  config.json
+  models/
+  logs/
+
+Linux/dev fallback:
+~/.local/share/Audiby/
+  config.json
+  models/
+  logs/
+```
+
+## Development
+
+### Tech Stack
+
+- Python 3.11-3.12
+- faster-whisper
+- sounddevice
+- pynput
+- pystray + Pillow
+- tkinter
+- uv
+- PyInstaller
+
+### Setup
 
 ```bash
-# Install dependencies
 uv sync
-
-# Download a Whisper model (required before first use)
-uv run python -m audiby --setup-model base
-# Options: tiny | base | small | medium | large-v3
-
-# Run the app
 uv run python -m audiby
 ```
 
-## Current Status (Important)
+Download or switch a Whisper model manually:
 
-- Windows is the primary target.
-- macOS support is currently an internal **headless dev preview**:
-  - Core pipeline startup exists.
-  - `--setup-model` works.
-  - No tray/settings UI is required for this flow.
-  - Real-device Mac validation is still required.
+```bash
+uv run python -m audiby --setup-model base
+```
+
+Supported models: `tiny`, `base`, `small`, `medium`, `large-v3`.
+
+### Build
+
+```bash
+uv run python scripts/build.py
+```
+
+On Windows this produces `dist/Audiby.exe`. On macOS this produces `dist/Audiby.app`, ad-hoc signs it, and packages `dist/Audiby-macos.zip`.
 
 ### Development Mode
 
-Set `AUDIBY_DEV_APPDATA=1` to redirect runtime data (config, models, logs) to repo-local `.tmp-appdata/Audiby`:
+Set `AUDIBY_DEV_APPDATA=1` to redirect runtime data to repo-local `.tmp-appdata/Audiby`:
 
 ```bash
 AUDIBY_DEV_APPDATA=1 uv run python -m audiby
 ```
-
-### Optional: Enable NVIDIA GPU Acceleration
-
-Audiby runs fully on CPU. GPU is optional, but faster.
-
-Use this only if you have an NVIDIA GPU and want acceleration. The commands below are PowerShell examples for Windows.
-
-Recommended combo:
-- CUDA Toolkit: `12.x` (for example `12.9`)
-- cuDNN: `9.x` built for CUDA 12 (for example `9.19` with `12.9` backend)
-
-Why these components:
-- NVIDIA Driver: Windows/app access to GPU hardware
-- CUDA Toolkit: GPU compute runtime/libraries
-- cuDNN: optimized deep-learning runtime for inference
-
-1. Check driver status:
-
-```powershell
-nvidia-smi
-```
-
-- If it works, your NVIDIA driver is installed.
-- If it fails, install/update the NVIDIA driver first.
-- Driver download: https://www.nvidia.com/Download/index.aspx
-
-2. Install CUDA Toolkit 12.x
-- CUDA downloads: https://developer.nvidia.com/cuda-downloads
-3. Install cuDNN 9 for CUDA 12
-- cuDNN downloads: https://developer.nvidia.com/cudnn
-- CUDA Windows install guide: https://docs.nvidia.com/cuda/cuda-installation-guide-microsoft-windows/index.html
-- cuDNN Windows install guide: https://docs.nvidia.com/deeplearning/cudnn/installation/latest/windows.html
-4. Ensure these folders are in `Path`:
-
-```text
-C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9\bin
-C:\Program Files\NVIDIA\CUDNN\v9.19\bin\12.9\x64
-```
-
-You can also use `%CUDA_PATH%\bin` instead of a hardcoded CUDA version if `%CUDA_PATH%` points to CUDA 12.
-
-5. Fully restart your IDE/terminal after editing environment variables.
-
-6. Open a new terminal and verify required DLLs:
-
-```powershell
-python -c "import ctypes; ctypes.WinDLL('cublas64_12.dll'); print('cublas OK')"
-python -c "import ctypes; ctypes.WinDLL('cudnn64_9.dll'); print('cudnn OK')"
-```
-
-If both commands print `OK`, GPU runtime is ready.
-
-If you see `cublas64_12.dll is not found` or `cudnn64_9.dll is not found`, CUDA/cuDNN is not installed correctly or not on `PATH`.
-
-Troubleshooting:
-- If full-path DLL loading works but name-based loading fails, the process is using stale/missing `Path`. Restart IDE/terminal (or sign out/in) and recheck.
-
-Note: when GPU runtime is unavailable, Audiby automatically falls back to CPU mode so dictation still works.
 
 ### Run Tests
 
@@ -132,11 +146,57 @@ Note: when GPU runtime is unavailable, Audiby automatically falls back to CPU mo
 uv run pytest
 ```
 
+## Optional GPU Acceleration
+
+Audiby runs fully on CPU. GPU is optional.
+
+Use this only if you have an NVIDIA GPU and want acceleration. The commands below are PowerShell examples for Windows.
+
+Recommended combo:
+
+- CUDA Toolkit: `12.x`
+- cuDNN: `9.x` built for CUDA 12
+
+Check driver status:
+
+```powershell
+nvidia-smi
+```
+
+If it fails, install or update the NVIDIA driver first:
+
+```text
+https://www.nvidia.com/Download/index.aspx
+```
+
+Install CUDA Toolkit and cuDNN:
+
+```text
+https://developer.nvidia.com/cuda-downloads
+https://developer.nvidia.com/cudnn
+```
+
+Ensure these folders are in `Path`:
+
+```text
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.x\bin
+C:\Program Files\NVIDIA\CUDNN\v9.x\bin\12.x\x64
+```
+
+Restart your terminal or IDE after editing environment variables, then verify DLL loading:
+
+```powershell
+python -c "import ctypes; ctypes.WinDLL('cublas64_12.dll'); print('cublas OK')"
+python -c "import ctypes; ctypes.WinDLL('cudnn64_9.dll'); print('cudnn OK')"
+```
+
+When GPU runtime is unavailable, Audiby falls back to CPU mode.
+
 ## Project Structure
 
 ```text
 src/audiby/
-  __main__.py       # CLI entry point (--setup-model supported)
+  __main__.py       # CLI entry point
   app.py            # pipeline orchestrator
   config.py         # JSON config load/save
   constants.py      # shared constants
@@ -145,41 +205,6 @@ src/audiby/
   platform/         # platform backends + factories
   ui/               # system tray, settings window, download dialog
 tests/              # mirrors src/ structure
-```
-
-## Configuration
-
-Settings are auto-created on first run:
-- Windows: `%APPDATA%\\Audiby\\config.json`
-- macOS/Linux: `~/.config/Audiby/config.json`
-- Dev override (`AUDIBY_DEV_APPDATA=1`): `./.tmp-appdata/Audiby/config.json`
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `push_to_talk_key` | `ctrl+space` on Windows, `cmd+space` on macOS | Hotkey combo for recording |
-| `audio_device_id` | `null` | System default mic |
-| `model_size` | `base` | Whisper model size |
-| `start_on_boot` | `false` | Launch on startup |
-| `alt_neutralization_strategy` | `tap_alt` | Alt-release behavior around paste injection |
-
-### Runtime Data
-
-Windows:
-
-```text
-%APPDATA%\Audiby\
-  config.json
-  models\    # downloaded Whisper model files
-  logs\      # rotating logs (5 x 1 MB)
-```
-
-macOS/Linux:
-
-```text
-~/.config/Audiby/
-  config.json
-  models/
-  logs/
 ```
 
 ## License
