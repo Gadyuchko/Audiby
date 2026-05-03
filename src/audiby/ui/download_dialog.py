@@ -11,14 +11,13 @@ from dataclasses import dataclass
 from tkinter import messagebox, ttk
 
 from audiby.constants import (
-    LOG_DIRNAME,
     LOG_FILENAME,
     LOG_FORMAT,
     MODEL_DISPLAY_SIZES,
     MODEL_DOWNLOAD_STATUS_MESSAGE,
 )
-from audiby.config import get_appdata_path
 from audiby.core import model_manager
+from audiby.platform.paths import logs_dir
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +127,7 @@ class DownloadDialog:
         if self._progress_bar is not None:
             self._progress_bar.configure(mode="indeterminate")
             self._progress_bar.start()
-        log_file = str(get_appdata_path() / LOG_DIRNAME / LOG_FILENAME)
+        log_file = str(logs_dir() / LOG_FILENAME)
         self._proc = subprocess.Popen(
             [
                 sys.executable, "-c",

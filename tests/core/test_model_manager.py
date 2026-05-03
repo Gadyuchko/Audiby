@@ -12,12 +12,21 @@ _MODEL_BIN = "model.bin"
 
 @pytest.fixture
 def fake_model_appdata(monkeypatch, tmp_path) -> Path:
-    """Patch model_manager appdata resolver to a deterministic test path."""
+    """Patch the platform.paths.models_dir helper to a deterministic test path.
+
+    Returns the simulated app-data root; the models directory itself sits at
+    ``<root>/models`` to mirror the real layout.
+    """
     fake_appdata = tmp_path / "Audiby"
 
+    def fake_models_dir() -> Path:
+        directory = fake_appdata / "models"
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory
+
     monkeypatch.setattr(
-        "audiby.core.model_manager.get_appdata_path",
-        lambda: fake_appdata,
+        "audiby.core.model_manager.models_dir",
+        fake_models_dir,
     )
     return fake_appdata
 
@@ -41,33 +50,34 @@ def test_get_model_root_appends_models_directory(fake_model_appdata):
     assert result == fake_model_appdata / "models"
 
 
-def test_get_model_root_uses_config_appdata_path(monkeypatch, tmp_path):
-    """get_model_root() composes from audiby.config.get_appdata_path()."""
-    fake_appdata = tmp_path / "Audiby"
+def test_get_model_root_uses_platform_models_dir(monkeypatch, tmp_path):
+    """get_model_root() composes from audiby.platform.paths.models_dir()."""
+    fake_models_root = tmp_path / "Audiby" / "models"
     calls = {"count": 0}
 
-    def fake_get_appdata_path() -> Path:
+    def fake_models_dir() -> Path:
         calls["count"] += 1
-        return fake_appdata
+        fake_models_root.mkdir(parents=True, exist_ok=True)
+        return fake_models_root
 
     monkeypatch.setattr(
-        "audiby.core.model_manager.get_appdata_path",
-        fake_get_appdata_path,
+        "audiby.core.model_manager.models_dir",
+        fake_models_dir,
     )
 
     result = model_manager.get_model_root()
 
-    assert result == fake_appdata / "models"
+    assert result == fake_models_root
     assert calls["count"] == 1
 
 
-def test_get_model_root_does_not_create_directory(fake_model_appdata):
-    """get_model_root() resolves path only and does not create directories."""
+def test_get_model_root_creates_models_directory(fake_model_appdata):
+    """get_model_root() ensures the models directory exists per platform.paths contract."""
     result = model_manager.get_model_root()
 
     assert result == fake_model_appdata / "models"
-    assert not fake_model_appdata.exists()
-    assert not result.exists()
+    assert result.exists()
+    assert result.is_dir()
 
 
 # ---------------------------------------------------------------------------
@@ -96,8 +106,8 @@ def test_exists_returns_false_when_directory_exists_but_model_bin_missing(fake_m
     assert model_manager.exists("base") is False
 
 
-def test_exists_does_not_create_model_directory(fake_model_appdata):
-    """exists() performs a check only and does not create model directories."""
+def test_exists_does_not_create_model_subdirectory(fake_model_appdata):
+    """exists() does not create the per-model subdirectory inside models/."""
     model_dir = fake_model_appdata / "models" / "base"
 
     assert model_manager.exists("base") is False

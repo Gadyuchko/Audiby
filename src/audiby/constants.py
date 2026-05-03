@@ -1,8 +1,6 @@
 """Shared constants for application-wide values."""
 
-import os
 import sys
-from pathlib import Path
 
 # Application identity
 APP_NAME = "Audiby"
@@ -16,14 +14,14 @@ CONFIG_KEY_AUTOSTART = "start_on_boot"
 CONFIG_KEY_ALT_NEUTRALIZATION = "alt_neutralization_strategy"
 
 # Default values
+# Runtime data paths live in audiby.platform.paths — never duplicate the OS
+# branching here.
+DEFAULT_HOTKEY = "ctrl+space"
+
 if sys.platform == "darwin":
-    DEFAULT_HOTKEY = "ctrl+space"
     PASTE_CHORD = "cmd+v"
-    CONFIG_DIR = str(Path.home() / ".config" / "audiby")
 else:
-    DEFAULT_HOTKEY = "ctrl+space"
     PASTE_CHORD = "ctrl+v"
-    CONFIG_DIR = os.path.join(os.environ.get("APPDATA", str(Path.home())), APP_NAME)
 
 DEFAULT_MODEL_SIZE = "base"
 DEFAULT_AUDIO_DEVICE = None

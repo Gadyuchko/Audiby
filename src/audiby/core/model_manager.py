@@ -5,9 +5,9 @@ from pathlib import Path
 
 from faster_whisper import download_model
 
-from audiby.config import get_appdata_path
 from audiby.constants import SUPPORTED_MODELS
 from audiby.exceptions import ModelError
+from audiby.platform.paths import models_dir
 
 logger = logging.getLogger(__name__)
 
@@ -16,8 +16,7 @@ _MODEL_BINARY = "model.bin"
 
 def get_model_root() -> Path:
     """Return the canonical local directory used to store Whisper models."""
-    app_data_directory = get_appdata_path()
-    model_root = app_data_directory / "models"
+    model_root = models_dir()
     logger.debug("Resolved model root directory: %s", model_root)
     return model_root
 
