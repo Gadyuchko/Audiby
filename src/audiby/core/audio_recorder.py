@@ -8,9 +8,33 @@ import numpy as np
 import sounddevice as sd
 
 from audiby.constants import DEFAULT_SAMPLE_RATE
-from audiby.exceptions import AudioError
+from audiby.exceptions import AudioDeviceError, AudioError, MicPermissionError
 
 logger = logging.getLogger(__name__)
+
+
+_MIC_PERMISSION_MARKERS = (
+    "access denied",
+    "permission denied",
+    "permissions denied",
+    "not authorized",
+    "unauthorized",
+    "privacy",
+    "microphone permission",
+)
+
+
+def _is_microphone_permission_error(error: sd.PortAudioError) -> bool:
+    """Return True when a PortAudio error looks like OS microphone denial."""
+    message = str(error).lower()
+    return any(marker in message for marker in _MIC_PERMISSION_MARKERS)
+
+
+def _audio_open_exception(message: str, error: sd.PortAudioError) -> AudioError:
+    """Map low-level PortAudio open/start failures to user-actionable errors."""
+    if _is_microphone_permission_error(error):
+        return MicPermissionError(message)
+    return AudioDeviceError(message)
 
 
 class AudioRecorder:
@@ -58,7 +82,7 @@ class AudioRecorder:
             )
         except sd.PortAudioError as err:
             logger.error("Could not open audio device %s: %s", self._device_id, err)
-            raise AudioError(f"Could not open audio device: {err}") from err
+            raise _audio_open_exception(f"Could not open audio device: {err}", err) from err
 
         try:
             self._stream.start()
@@ -68,7 +92,7 @@ class AudioRecorder:
             finally:
                 self._stream = None
             logger.error("Could not start audio stream on device %s: %s", self._device_id, err)
-            raise AudioError(f"Could not start audio stream: {err}") from err
+            raise _audio_open_exception(f"Could not start audio stream: {err}", err) from err
 
     def prime(self) -> None:
         """Open/start stream ahead of first burst to remove device startup lag."""

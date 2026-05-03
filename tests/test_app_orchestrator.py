@@ -18,7 +18,14 @@ import numpy as np
 import pytest
 
 from audiby.app import ApplicationOrchestrator, run_app
-from audiby.exceptions import AudioError, InjectionError, TranscriptionError
+from audiby.exceptions import (
+    AudioDeviceError,
+    AudioError,
+    HotkeyPermissionError,
+    InjectionError,
+    MicPermissionError,
+    TranscriptionError,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -276,6 +283,33 @@ class TestWorkerRecovery:
         assert recorder_cls.return_value.start.call_count >= 2
         assert recorder_cls.return_value.stop.call_count >= 1
 
+    def test_audio_device_error_warns_and_allows_future_attempt(
+        self, orchestrator, patch_components, mocker
+    ):
+        """Mid-session device failure should warn once and stay alive for a later attempt."""
+        recorder_cls, _, _, _ = patch_components
+        warning = mocker.patch("audiby.app.show_device_disconnected_warning")
+        recorder_cls.return_value.start.side_effect = [AudioDeviceError("device lost"), None]
+        orchestrator._QUEUE_POLL_TIMEOUT = 0.02
+
+        orchestrator.start()
+        try:
+            orchestrator.on_hotkey_press()
+            time.sleep(0.12)
+            orchestrator.on_hotkey_release()
+            time.sleep(0.05)
+            assert not orchestrator.stop_event.is_set()
+
+            orchestrator.on_hotkey_press()
+            time.sleep(0.12)
+            orchestrator.on_hotkey_release()
+            time.sleep(0.05)
+        finally:
+            orchestrator.shutdown()
+
+        warning.assert_called_once()
+        assert recorder_cls.return_value.start.call_count >= 2
+
     def test_audio_start_failure_exceeds_max_attempts_sets_stop_event(
         self, orchestrator, patch_components
     ):
@@ -412,12 +446,13 @@ class TestShutdown:
 class TestTrayIntegration:
     """Tests for tray controller integration with the application orchestrator."""
 
-    def test_init_wires_tray_callbacks(self, mock_config, patch_components, mocker):
-        """ApplicationOrchestrator must wire tray callbacks during construction."""
+    def test_start_tray_wires_tray_callbacks(self, mock_config, patch_components, mocker):
+        """ApplicationOrchestrator must wire tray callbacks when tray is started."""
         mock_tray_cls = mocker.patch("audiby.app.TrayController")
         mocker.patch("audiby.app.SettingsWindow")
 
-        ApplicationOrchestrator(mock_config)
+        orch = ApplicationOrchestrator(mock_config)
+        orch.start_tray()
 
         _, kwargs = mock_tray_cls.call_args
         assert kwargs["on_settings"] is not None
@@ -439,6 +474,7 @@ class TestTrayIntegration:
         orch = ApplicationOrchestrator(mock_config)
 
         orch.start()
+        orch.start_tray()
         orch._on_tray_quit()
 
         assert orch.stop_event.is_set()
@@ -449,6 +485,7 @@ class TestTrayIntegration:
         mock_tray_cls = mocker.patch("audiby.app.TrayController")
         orch = ApplicationOrchestrator(mock_config)
         orch.start()
+        orch.start_tray()
         orch.shutdown()
         mock_tray_cls.return_value.stop.assert_called()
 
@@ -779,6 +816,61 @@ class TestRunAppStartupFallback:
         assert result == 1
         dialog_cls.assert_called_once_with("medium")
         app_cls.assert_not_called()
+
+
+class TestRunAppPermissionFailures:
+    """Tests for friendly startup permission failure handling."""
+
+    def test_mic_permission_failure_shows_dialog_and_skips_tray(self, mocker, tmp_path):
+        config = MagicMock()
+        config.config_dir = tmp_path
+        config.get.side_effect = lambda key, default=None: {
+            "model_size": "base",
+            "push_to_talk_key": "alt+z",
+        }.get(key, default)
+
+        mocker.patch("audiby.app.setup_logging", return_value=tmp_path / "audiby.log")
+        mocker.patch("audiby.app.model_manager.exists", return_value=True)
+        mocker.patch("audiby.app.AudioRecorder")
+        mocker.patch("audiby.app.Transcriber")
+        mocker.patch("audiby.app.TextInjector")
+        mocker.patch("audiby.app.get_hotkey_manager")
+        mocker.patch(
+            "audiby.app.ensure_mac_input_permissions",
+            side_effect=MicPermissionError("mic denied"),
+        )
+        tray_cls = mocker.patch("audiby.app.TrayController")
+        dialog = mocker.patch("audiby.app.show_mic_permission_error")
+
+        result = run_app(config)
+
+        assert result == 1
+        dialog.assert_called_once()
+        tray_cls.assert_not_called()
+
+    def test_hotkey_permission_failure_shows_dialog_and_skips_tray(self, mocker, tmp_path):
+        config = MagicMock()
+        config.config_dir = tmp_path
+        config.get.side_effect = lambda key, default=None: {
+            "model_size": "base",
+            "push_to_talk_key": "alt+z",
+        }.get(key, default)
+
+        mocker.patch("audiby.app.setup_logging", return_value=tmp_path / "audiby.log")
+        mocker.patch("audiby.app.model_manager.exists", return_value=True)
+        mocker.patch("audiby.app.AudioRecorder")
+        mocker.patch("audiby.app.Transcriber")
+        mocker.patch("audiby.app.TextInjector")
+        hotkey_factory = mocker.patch("audiby.app.get_hotkey_manager")
+        hotkey_factory.return_value.start.side_effect = HotkeyPermissionError("input denied")
+        tray_cls = mocker.patch("audiby.app.TrayController")
+        dialog = mocker.patch("audiby.app.show_hotkey_permission_error")
+
+        result = run_app(config)
+
+        assert result == 1
+        dialog.assert_called_once()
+        tray_cls.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

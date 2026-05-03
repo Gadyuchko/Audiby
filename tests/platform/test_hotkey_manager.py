@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from audiby.exceptions import HotkeyError
+from audiby.exceptions import HotkeyError, HotkeyPermissionError
 from audiby.platform._hotkey_mac import MacHotkeyManager
 from audiby.platform._hotkey_win import WindowsHotkeyManager
 from audiby.platform.hotkey_manager import get_hotkey_manager
@@ -55,12 +55,14 @@ def test_windows_start_creates_listener(mocker, callbacks):
 
 def test_windows_start_wraps_listener_failure(mocker, callbacks):
     listener_cls = mocker.patch("audiby.platform.hotkey_manager.Listener")
-    listener_cls.return_value.start.side_effect = RuntimeError("boom")
+    original = RuntimeError("boom")
+    listener_cls.return_value.start.side_effect = original
     on_press, on_release = callbacks
     manager = WindowsHotkeyManager("alt+z", on_press, on_release)
 
-    with pytest.raises(HotkeyError):
+    with pytest.raises(HotkeyPermissionError) as exc_info:
         manager.start()
+    assert exc_info.value.__cause__ is original
 
 
 def test_windows_combo_press_release_invokes_callbacks(callbacks):
@@ -114,9 +116,16 @@ def test_mac_combo_press_release_invokes_callbacks(callbacks):
 
 def test_mac_start_wraps_listener_failure(mocker, callbacks):
     listener_cls = mocker.patch("audiby.platform.hotkey_manager.Listener")
-    listener_cls.return_value.start.side_effect = RuntimeError("boom")
+    original = RuntimeError("boom")
+    listener_cls.return_value.start.side_effect = original
     on_press, on_release = callbacks
     manager = MacHotkeyManager("cmd+z", on_press, on_release)
 
-    with pytest.raises(HotkeyError):
+    with pytest.raises(HotkeyPermissionError) as exc_info:
         manager.start()
+    assert exc_info.value.__cause__ is original
+
+
+def test_hotkey_permission_error_remains_hotkey_error() -> None:
+    """Settings fallback code can keep catching HotkeyError."""
+    assert issubclass(HotkeyPermissionError, HotkeyError)

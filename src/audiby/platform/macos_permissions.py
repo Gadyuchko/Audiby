@@ -32,7 +32,7 @@ import logging
 import sys
 from pathlib import Path
 
-from audiby.exceptions import HotkeyError
+from audiby.exceptions import HotkeyPermissionError
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ def ensure_mac_input_permissions() -> None:
 
     This is a startup preflight only. It does not request, enable, or modify
     any OS permissions. It asks macOS whether the current process is already
-    authorized and raises a ``HotkeyError`` with an actionable message if not.
+    authorized and raises a ``HotkeyPermissionError`` with an actionable message if not.
     """
     if sys.platform != "darwin":
         return
@@ -55,7 +55,7 @@ def ensure_mac_input_permissions() -> None:
 
     host = _resolve_host_hint()
     missing_text = ", ".join(missing)
-    raise HotkeyError(
+    raise HotkeyPermissionError(
         "macOS permissions missing: "
         f"{missing_text}. Enable them for {host} in System Settings > Privacy & Security, "
         "then fully restart that host app."

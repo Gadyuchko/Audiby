@@ -14,9 +14,19 @@ from pathlib import Path
 from queue import Queue
 from typing import Tuple, Any
 
-from audiby.exceptions import HotkeyError
+from audiby.exceptions import (
+    AudioDeviceError,
+    HotkeyError,
+    HotkeyPermissionError,
+    MicPermissionError,
+)
 from audiby.platform.shell import get_shell
 from audiby.ui.download_dialog import DownloadDialog
+from audiby.ui.error_dialogs import (
+    show_device_disconnected_warning,
+    show_hotkey_permission_error,
+    show_mic_permission_error,
+)
 from audiby.ui.settings_window import SettingsWindow
 from audiby.config import Config
 from audiby.constants import (
@@ -70,6 +80,14 @@ def run_app(config: Config) -> int:
     try:
         app.start()
         app.start_tray()
+    except MicPermissionError:
+        logger.warning("Startup blocked by missing microphone permission")
+        show_mic_permission_error()
+        return 1
+    except HotkeyPermissionError:
+        logger.warning("Startup blocked by missing hotkey permission")
+        show_hotkey_permission_error()
+        return 1
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
     except Exception:
@@ -187,11 +205,8 @@ class ApplicationOrchestrator:
 
         log_path = config.config_dir / LOG_DIRNAME
         self._settings_win = SettingsWindow(config, self.apply_settings)
-        self._tray_controller = TrayController(
-            on_settings=self._on_tray_settings,
-            on_open_log_folder=lambda: self._on_tray_open_logs_folder(log_path),
-            on_quit=self._on_tray_quit
-        )
+        self._log_path = log_path
+        self._tray_controller: TrayController | None = None
 
     def on_hotkey_press(self) -> None:
         """Signal recording start - called by HotkeyManager on combo press."""
@@ -235,10 +250,11 @@ class ApplicationOrchestrator:
         self._stop_event.set()
         self._audio_control_event.set()
         self._hotkey_manager.stop()
-        try:
-            self._tray_controller.stop()
-        except Exception as exc:
-            logger.warning("Tray stop failed during shutdown: %s: %s", type(exc).__name__, exc)
+        if self._tray_controller is not None:
+            try:
+                self._tray_controller.stop()
+            except Exception as exc:
+                logger.warning("Tray stop failed during shutdown: %s: %s", type(exc).__name__, exc)
         try:
             self._settings_win.destroy()
         except Exception as exc:
@@ -358,6 +374,12 @@ class ApplicationOrchestrator:
                         is_recording = True
                         self._audio_failures = 0
                         logger.debug("Audio recording started")
+                    except AudioDeviceError as e:
+                        logger.warning("Audio device unavailable during recording: %s", e)
+                        show_device_disconnected_warning()
+                        self._recording_event.clear()
+                        self._audio_control_event.clear()
+                        is_recording = False
                     except Exception as e:
                         logger.error("Audio start failed: %s - %s", type(e).__name__, e)
                         should_retry, self._audio_failures = self._schedule_recovery("Audio", self._audio_failures)
@@ -601,6 +623,12 @@ class ApplicationOrchestrator:
         return self._recording_event
 
     def start_tray(self):
+        if self._tray_controller is None:
+            self._tray_controller = TrayController(
+                on_settings=self._on_tray_settings,
+                on_open_log_folder=lambda: self._on_tray_open_logs_folder(self._log_path),
+                on_quit=self._on_tray_quit,
+            )
         self._tray_controller.start()
 
     def _schedule_recovery(self, component: str, failures: int) -> Tuple[bool, int]:

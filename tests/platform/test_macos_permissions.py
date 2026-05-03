@@ -2,7 +2,7 @@
 
 import pytest
 
-from audiby.exceptions import HotkeyError
+from audiby.exceptions import HotkeyPermissionError
 from audiby.platform.macos_permissions import ensure_mac_input_permissions
 
 
@@ -18,7 +18,7 @@ def test_mac_preflight_raises_with_clear_message(monkeypatch, mocker):
         return_value=["Accessibility", "Input Monitoring"],
     )
 
-    with pytest.raises(HotkeyError) as exc:
+    with pytest.raises(HotkeyPermissionError) as exc:
         ensure_mac_input_permissions()
 
     message = str(exc.value)
