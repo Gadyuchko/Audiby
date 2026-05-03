@@ -182,7 +182,7 @@ class ApplicationOrchestrator:
         alt_neutralization_strategy = config.get(
             CONFIG_KEY_ALT_NEUTRALIZATION, DEFAULT_ALT_NEUTRALIZATION_STRATEGY
         )
-        model_path = model_manager.get_model_root() / model_name
+        model_path = model_manager.resolve_model_path(model_name)
         self._model_path = model_path
 
         # exponential back off variables
@@ -493,7 +493,7 @@ class ApplicationOrchestrator:
             return f"Model {model} is not downloaded."
 
         old_model_path = self._model_path
-        model_path = model_manager.get_model_root() / model
+        model_path = model_manager.resolve_model_path(model)
         self._release_transcriber()
         try:
             new_transcriber = Transcriber(model_path, self._audio_queue, self._text_queue)

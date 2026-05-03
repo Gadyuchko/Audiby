@@ -94,6 +94,41 @@ def test_exists_returns_true_when_model_binary_present(fake_model_appdata):
     assert model_manager.exists("base") is True
 
 
+def test_exists_prefers_bundled_base_model(monkeypatch, tmp_path, fake_model_appdata):
+    """Bundled base satisfies startup without creating or requiring user model storage."""
+    bundled_root = tmp_path / "bundle"
+    bundled_model = bundled_root / "models" / "base"
+    bundled_model.mkdir(parents=True)
+    (bundled_model / _MODEL_BIN).touch()
+    monkeypatch.setattr(
+        model_manager,
+        "resource_path",
+        lambda rel_path: bundled_root / rel_path,
+    )
+
+    assert model_manager.exists("base") is True
+    assert model_manager.resolve_model_path("base") == bundled_model
+
+
+def test_non_default_model_ignores_bundled_base(monkeypatch, tmp_path, fake_model_appdata):
+    """User-selected non-default models remain isolated in user model storage."""
+    bundled_root = tmp_path / "bundle"
+    bundled_model = bundled_root / "models" / "base"
+    bundled_model.mkdir(parents=True)
+    (bundled_model / _MODEL_BIN).touch()
+    user_model = fake_model_appdata / "models" / "small"
+    user_model.mkdir(parents=True)
+    (user_model / _MODEL_BIN).touch()
+    monkeypatch.setattr(
+        model_manager,
+        "resource_path",
+        lambda rel_path: bundled_root / rel_path,
+    )
+
+    assert model_manager.exists("small") is True
+    assert model_manager.resolve_model_path("small") == user_model
+
+
 def test_exists_returns_false_when_model_directory_is_missing(fake_model_appdata):
     """exists() returns False when the expected model directory is absent."""
     assert model_manager.exists("base") is False
@@ -175,6 +210,23 @@ def test_download_uses_download_model_with_output_dir(monkeypatch, fake_model_ap
     assert calls["model"] == "base"
     assert calls["output_dir"] == str(fake_model_appdata / "models" / "base")
     assert result == fake_model_appdata / "models" / "base"
+
+
+def test_download_can_target_build_model_root(monkeypatch, tmp_path):
+    """Build script can reuse model_manager.download() for build/models/base."""
+    calls = {}
+    build_models_root = tmp_path / "build" / "models"
+    monkeypatch.setattr(
+        model_manager,
+        "download_model",
+        _make_fake_download_model(tmp_path, calls),
+        raising=False,
+    )
+
+    result = model_manager.download("base", root=build_models_root)
+
+    assert calls["output_dir"] == str(build_models_root / "base")
+    assert result == build_models_root / "base"
 
 
 def test_download_normalizes_supported_model_name(monkeypatch, fake_model_appdata):

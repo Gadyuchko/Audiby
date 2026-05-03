@@ -18,6 +18,7 @@ dist/
 
 # PyInstaller
 *.spec
+!Audiby.spec
 
 # IDE
 .idea/
