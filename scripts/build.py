@@ -108,6 +108,32 @@ def pyinstaller_command(config: BuildConfig, project_root: Path = PROJECT_ROOT) 
     ]
 
 
+def postprocess_macos_app(app_path: Path, project_root: Path = PROJECT_ROOT) -> Path:
+    """Ad-hoc sign and zip the macOS app bundle for release distribution."""
+    zip_path = project_root / "dist" / "Audiby-macos.zip"
+    subprocess.run(
+        ["codesign", "--force", "--deep", "--sign", "-", str(app_path)],
+        cwd=project_root,
+        check=True,
+    )
+    subprocess.run(
+        [
+            "ditto",
+            "-c",
+            "-k",
+            "--sequesterRsrc",
+            "--keepParent",
+            str(app_path),
+            str(zip_path),
+        ],
+        cwd=project_root,
+        check=True,
+    )
+    if not zip_path.exists():
+        raise SystemExit(f"macOS zip completed but artifact was not found: {zip_path}")
+    return zip_path
+
+
 def run(platform: str = sys.platform) -> int:
     """Prepare generated build inputs and run PyInstaller."""
     config = build_config(platform)
@@ -118,6 +144,8 @@ def run(platform: str = sys.platform) -> int:
     artifact = PROJECT_ROOT / config.artifact
     if not artifact.exists():
         raise SystemExit(f"PyInstaller completed but artifact was not found: {artifact}")
+    if config.platform == "darwin":
+        postprocess_macos_app(artifact, PROJECT_ROOT)
     return 0
 
 

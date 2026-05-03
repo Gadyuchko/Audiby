@@ -81,3 +81,45 @@ def test_run_invokes_subprocess_with_argument_list(monkeypatch, tmp_path):
     assert isinstance(calls["command"], list)
     assert calls["cwd"] == tmp_path
     assert calls["check"] is True
+
+
+def test_run_codesigns_and_zips_macos_app(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_prepare_model(root: Path) -> Path:
+        model_dir = root / "build" / "models" / "base"
+        model_dir.mkdir(parents=True)
+        return model_dir
+
+    def fake_run(command, cwd, check):
+        calls.append(command)
+        if command[:4] == [sys.executable, "-m", "PyInstaller", "--clean"]:
+            (cwd / "dist" / "Audiby.app").mkdir(parents=True)
+        if command[0] == "ditto":
+            (cwd / "dist" / "Audiby-macos.zip").touch()
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(build, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(build, "ensure_packaging_icons", lambda root: None)
+    monkeypatch.setattr(build, "prepare_bundled_base_model", fake_prepare_model)
+    monkeypatch.setattr(build.subprocess, "run", fake_run)
+    (tmp_path / "Audiby.spec").touch()
+
+    assert build.run("darwin") == 0
+    assert [
+        "codesign",
+        "--force",
+        "--deep",
+        "--sign",
+        "-",
+        str(tmp_path / "dist" / "Audiby.app"),
+    ] in calls
+    assert [
+        "ditto",
+        "-c",
+        "-k",
+        "--sequesterRsrc",
+        "--keepParent",
+        str(tmp_path / "dist" / "Audiby.app"),
+        str(tmp_path / "dist" / "Audiby-macos.zip"),
+    ] in calls
