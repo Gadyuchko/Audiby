@@ -310,6 +310,53 @@ class TestWorkerRecovery:
         warning.assert_called_once()
         assert recorder_cls.return_value.start.call_count >= 2
 
+    def test_audio_prime_mic_permission_warns_without_stopping_app(
+        self, orchestrator, patch_components, mocker
+    ):
+        """Startup mic denial should show guidance but keep tray-capable app alive."""
+        recorder_cls, _, _, _ = patch_components
+        dialog = mocker.patch("audiby.app.show_mic_permission_error")
+        recorder_cls.return_value.prime.side_effect = MicPermissionError("mic denied")
+        orchestrator._QUEUE_POLL_TIMEOUT = 0.02
+
+        orchestrator.start()
+        try:
+            time.sleep(0.1)
+            assert not orchestrator.stop_event.is_set()
+        finally:
+            orchestrator.shutdown()
+
+        dialog.assert_called_once()
+        recorder_cls.return_value.start.assert_not_called()
+
+    def test_audio_start_mic_permission_warns_once_and_allows_future_attempt(
+        self, orchestrator, patch_components, mocker
+    ):
+        """Hotkey-time mic denial should not stop the app or spam dialogs."""
+        recorder_cls, _, _, _ = patch_components
+        dialog = mocker.patch("audiby.app.show_mic_permission_error")
+        recorder_cls.return_value.start.side_effect = [
+            MicPermissionError("mic denied"),
+            MicPermissionError("still denied"),
+        ]
+        orchestrator._QUEUE_POLL_TIMEOUT = 0.02
+
+        orchestrator.start()
+        try:
+            orchestrator.on_hotkey_press()
+            time.sleep(0.1)
+            assert not orchestrator.stop_event.is_set()
+
+            orchestrator.on_hotkey_press()
+            time.sleep(0.1)
+            assert not orchestrator.stop_event.is_set()
+        finally:
+            orchestrator.on_hotkey_release()
+            orchestrator.shutdown()
+
+        dialog.assert_called_once()
+        assert recorder_cls.return_value.start.call_count >= 2
+
     def test_audio_start_failure_exceeds_max_attempts_sets_stop_event(
         self, orchestrator, patch_components
     ):

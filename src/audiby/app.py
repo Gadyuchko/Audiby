@@ -189,6 +189,7 @@ class ApplicationOrchestrator:
         self._transcriber_failures = 0
         self._injector_failures = 0
         self._audio_failures = 0
+        self._mic_permission_warning_shown = False
         self._backoff_initial = 0.05
         self._backoff_max = 1.0
         self._backoff_factor = 2.0
@@ -360,6 +361,10 @@ class ApplicationOrchestrator:
                     self._recorder.prime()
                     self._audio_failures = 0
                     break
+                except MicPermissionError as e:
+                    logger.warning("Microphone permission unavailable during audio prime: %s", e)
+                    self._show_mic_permission_warning_once()
+                    return
                 except Exception as e:
                     logger.error("Audio prime failed: %s - %s", type(e).__name__, e)
                     should_retry, self._audio_failures = self._schedule_recovery("Audio", self._audio_failures)
@@ -374,6 +379,12 @@ class ApplicationOrchestrator:
                         is_recording = True
                         self._audio_failures = 0
                         logger.debug("Audio recording started")
+                    except MicPermissionError as e:
+                        logger.warning("Microphone permission unavailable during recording: %s", e)
+                        self._show_mic_permission_warning_once()
+                        self._recording_event.clear()
+                        self._audio_control_event.clear()
+                        is_recording = False
                     except AudioDeviceError as e:
                         logger.warning("Audio device unavailable during recording: %s", e)
                         show_device_disconnected_warning()
@@ -410,6 +421,13 @@ class ApplicationOrchestrator:
             except Exception as e:
                 logger.exception("Audio stream close failed during shutdown: %s - %s", type(e).__name__, e)
             logger.debug("Audio worker stopped")
+
+    def _show_mic_permission_warning_once(self) -> None:
+        """Show microphone permission guidance once per app run."""
+        if self._mic_permission_warning_shown:
+            return
+        self._mic_permission_warning_shown = True
+        show_mic_permission_error()
 
     def _on_tray_settings(self) ->None:
         try:

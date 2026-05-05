@@ -32,19 +32,21 @@ import logging
 import sys
 from pathlib import Path
 
-from audiby.exceptions import HotkeyPermissionError
-
 logger = logging.getLogger(__name__)
 
 _APP_SERVICES_PATH = "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices"
 
 
 def ensure_mac_input_permissions() -> None:
-    """Fail fast when macOS has not granted the current process required permissions.
+    """Log macOS input permission status without blocking application startup.
 
     This is a startup preflight only. It does not request, enable, or modify
     any OS permissions. It asks macOS whether the current process is already
-    authorized and raises a ``HotkeyPermissionError`` with an actionable message if not.
+    authorized and logs actionable guidance when permissions appear to be missing.
+
+    The check is intentionally non-fatal because macOS/TCC can report permission
+    state inconsistently for unsigned or relocated app bundles. Runtime hotkey
+    registration remains the authoritative failure point.
     """
     if sys.platform != "darwin":
         return
@@ -55,7 +57,7 @@ def ensure_mac_input_permissions() -> None:
 
     host = _resolve_host_hint()
     missing_text = ", ".join(missing)
-    raise HotkeyPermissionError(
+    logger.warning(
         "macOS permissions missing: "
         f"{missing_text}. Enable them for {host} in System Settings > Privacy & Security, "
         "then fully restart that host app."

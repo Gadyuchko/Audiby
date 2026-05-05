@@ -1,8 +1,5 @@
 """Tests for macOS permission preflight messaging and detection."""
 
-import pytest
-
-from audiby.exceptions import HotkeyPermissionError
 from audiby.platform.macos_permissions import ensure_mac_input_permissions
 
 
@@ -11,17 +8,17 @@ def test_non_mac_preflight_is_noop(monkeypatch):
     ensure_mac_input_permissions()
 
 
-def test_mac_preflight_raises_with_clear_message(monkeypatch, mocker):
+def test_mac_preflight_logs_clear_message_without_blocking(monkeypatch, mocker, caplog):
     monkeypatch.setattr("sys.platform", "darwin")
     mocker.patch(
         "audiby.platform.macos_permissions.get_missing_mac_input_permissions",
         return_value=["Accessibility", "Input Monitoring"],
     )
 
-    with pytest.raises(HotkeyPermissionError) as exc:
+    with caplog.at_level("WARNING", logger="audiby.platform.macos_permissions"):
         ensure_mac_input_permissions()
 
-    message = str(exc.value)
+    message = caplog.text
     assert "Accessibility" in message
     assert "Input Monitoring" in message
     assert "System Settings > Privacy & Security" in message
