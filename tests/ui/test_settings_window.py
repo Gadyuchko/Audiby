@@ -117,6 +117,18 @@ class TestSettingsWindowLifecycle:
         title_arg = title_calls[0].args[0]
         assert "settings" in title_arg.lower() or "audiby" in title_arg.lower()
 
+    def test_macos_show_builds_window_without_worker_thread(
+        self, settings_window, mock_tk, mocker, monkeypatch
+    ):
+        """macOS must create Tk on the pystray/AppKit thread, not a new thread."""
+        monkeypatch.setattr("sys.platform", "darwin")
+        thread_cls = mocker.patch("audiby.ui.settings_window.threading.Thread")
+
+        settings_window.show()
+
+        thread_cls.assert_not_called()
+        assert mock_tk["Tk"].called
+
 
 # ---------------------------------------------------------------------------
 # Singleton / reuse behavior

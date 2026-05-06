@@ -61,10 +61,17 @@ class SettingsWindow:
         self._window_bottom_margin = 80
 
     def show(self):
-        # pystray menu callbacks run on a background thread, but tkinter requires
-        # its own thread with mainloop() to process GUI events. We spawn a dedicated
-        # GUI thread for each window lifecycle. If the window is already open,
-        # we use after() to safely schedule lift() on the tkinter thread.
+        # macOS Tk must be created on the main AppKit thread. pystray's macOS
+        # menu callback is already on that thread, so build the window directly.
+        if sys.platform == "darwin":
+            if self._window is not None:
+                self._window.lift()
+                return
+            self._build_and_run()
+            return
+
+        # Other pystray backends may invoke menu callbacks from a background
+        # thread, so keep the existing dedicated tkinter thread there.
         if self._gui_thread is not None and self._gui_thread.is_alive():
             if self._window is not None:
                 self._window.after(0, self._window.lift)
