@@ -100,6 +100,12 @@ def pyinstaller_command(config: BuildConfig, project_root: Path = PROJECT_ROOT) 
         str(project_root / "assets" / "icon.ico"),
         "--paths",
         str(project_root / "src"),
+        # faster-whisper ships silero_vad_v6.onnx as package data. Without this
+        # the frozen exe raises ONNXRuntimeError NO_SUCHFILE on every
+        # transcription once vad_filter is enabled, while dev runs work fine
+        # because the file is present in site-packages.
+        "--collect-data",
+        "faster_whisper",
         "--add-data",
         _add_data_arg(model_source, "models/base"),
         "--add-data",

@@ -770,3 +770,99 @@ class TestCaptureGain:
             t.transcribe(_make_audio(amplitude=0.04))
 
         assert "Applying capture gain" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Missing VAD asset must degrade, not break every transcription
+# ---------------------------------------------------------------------------
+
+_VAD_ASSET_ERROR = (
+    "[ONNXRuntimeError] : 3 : NO_SUCHFILE : Load model from "
+    r"C:\Users\x\AppData\Local\Temp\_MEI399042\faster_whisper\assets\silero_vad_v6.onnx"
+    " failed. File doesn't exist"
+)
+
+
+class TestVadAssetFallback:
+    """A frozen build missing silero_vad must still transcribe.
+
+    Regression guard: enabling vad_filter without bundling faster-whisper's
+    package data made the packaged exe fail every single utterance with
+    ONNXRuntimeError NO_SUCHFILE, while dev runs were unaffected.
+    """
+
+    def test_retries_without_vad_and_still_produces_text(self, make_transcriber):
+        """The utterance must survive a missing VAD asset."""
+        t, mock_model, text_queue = make_transcriber()
+        mock_model.transcribe.side_effect = [
+            RuntimeError(_VAD_ASSET_ERROR),
+            (iter([_make_segment("recovered text")]), None),
+        ]
+
+        t.transcribe(_make_audio())
+
+        assert text_queue.get_nowait() == "recovered text"
+
+    def test_retry_disables_vad(self, make_transcriber):
+        """The retry must not repeat the call that just failed."""
+        t, mock_model, _ = make_transcriber()
+        mock_model.transcribe.side_effect = [
+            RuntimeError(_VAD_ASSET_ERROR),
+            (iter([_make_segment("ok")]), None),
+        ]
+
+        t.transcribe(_make_audio())
+
+        first, second = mock_model.transcribe.call_args_list
+        assert first.kwargs["vad_filter"] is True
+        assert second.kwargs["vad_filter"] is False
+
+    def test_vad_stays_disabled_for_later_utterances(self, make_transcriber):
+        """One probe is enough - do not fail a call per utterance forever."""
+        t, mock_model, _ = make_transcriber()
+        mock_model.transcribe.side_effect = [
+            RuntimeError(_VAD_ASSET_ERROR),
+            (iter([_make_segment("first")]), None),
+            (iter([_make_segment("second")]), None),
+        ]
+
+        t.transcribe(_make_audio())
+        t.transcribe(_make_audio())
+
+        assert mock_model.transcribe.call_count == 3
+        assert mock_model.transcribe.call_args_list[-1].kwargs["vad_filter"] is False
+
+    def test_logs_the_packaging_cause(self, make_transcriber, caplog):
+        """The log must name the real cause, not just the ONNX symptom."""
+        t, mock_model, _ = make_transcriber()
+        mock_model.transcribe.side_effect = [
+            RuntimeError(_VAD_ASSET_ERROR),
+            (iter([_make_segment("ok")]), None),
+        ]
+
+        with caplog.at_level(logging.ERROR, logger="audiby.core.transcriber"):
+            t.transcribe(_make_audio())
+
+        assert "Silero VAD asset could not be loaded" in caplog.text
+        assert "not" in caplog.text and "bundled" in caplog.text
+
+    def test_unrelated_failures_are_not_treated_as_vad_problems(self, make_transcriber):
+        """Only the VAD asset error may disable VAD."""
+        t, mock_model, _ = make_transcriber()
+        mock_model.transcribe.side_effect = RuntimeError("decoder exploded")
+
+        with pytest.raises(TranscriptionError):
+            t.transcribe(_make_audio())
+
+        assert mock_model.transcribe.call_count == 1
+
+    def test_failure_after_disabling_vad_still_raises(self, make_transcriber):
+        """A genuinely broken model must not be masked by the retry."""
+        t, mock_model, _ = make_transcriber()
+        mock_model.transcribe.side_effect = [
+            RuntimeError(_VAD_ASSET_ERROR),
+            RuntimeError("still broken"),
+        ]
+
+        with pytest.raises(TranscriptionError):
+            t.transcribe(_make_audio())

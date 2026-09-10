@@ -6,6 +6,8 @@ This spec is the source of Info.plist values used by scripts/build.py on macOS.
 
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_data_files
+
 
 ROOT = Path(SPECPATH)
 SRC = ROOT / "src"
@@ -20,6 +22,9 @@ a = Analysis(
     datas=[
         (str(MODEL_DIR), "models/base"),
         (str(TRAY_ICON), "assets"),
+        # silero_vad_v6.onnx ships as faster-whisper package data and is
+        # required once vad_filter is enabled - see scripts/build.py.
+        *collect_data_files("faster_whisper"),
     ],
     hiddenimports=[],
     hookspath=[],

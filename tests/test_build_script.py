@@ -123,3 +123,42 @@ def test_run_codesigns_and_zips_macos_app(monkeypatch, tmp_path):
         str(tmp_path / "dist" / "Audiby.app"),
         str(tmp_path / "dist" / "Audiby-macos.zip"),
     ] in calls
+
+
+def test_windows_build_command_collects_faster_whisper_data(tmp_path):
+    """The frozen exe needs faster-whisper's silero_vad asset bundled.
+
+    Regression guard: enabling vad_filter without this made the packaged build
+    raise ONNXRuntimeError NO_SUCHFILE on every transcription, while dev runs
+    worked because the asset sits in site-packages.
+    """
+    root = tmp_path
+    (root / "assets").mkdir()
+    (root / "assets" / "icon.ico").touch()
+    (root / "build" / "models" / "base").mkdir(parents=True)
+
+    command = build.pyinstaller_command(build.build_config("win32"), root)
+
+    assert "--collect-data" in command
+    assert command[command.index("--collect-data") + 1] == "faster_whisper"
+
+
+def test_macos_spec_collects_faster_whisper_data():
+    """The macOS bundle takes the same asset via the spec file."""
+    spec = (Path(__file__).resolve().parents[1] / "Audiby.spec").read_text(encoding="utf-8")
+
+    assert "collect_data_files" in spec
+    assert 'collect_data_files("faster_whisper")' in spec
+
+
+def test_faster_whisper_ships_the_vad_asset_this_build_expects():
+    """Guard the assumption behind --collect-data: the asset really is package data.
+
+    If faster-whisper ever relocates or renames it, this fails loudly here
+    rather than only in a packaged build on a user's machine.
+    """
+    from PyInstaller.utils.hooks import collect_data_files
+
+    collected = collect_data_files("faster_whisper")
+
+    assert any("silero_vad" in source for source, _ in collected), collected

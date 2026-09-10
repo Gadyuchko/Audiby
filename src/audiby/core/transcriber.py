@@ -44,6 +44,10 @@ class Transcriber:
         self._model_path = Path(model_path)
         self._device_mode = device_mode
         self._runtime_cpu_fallback_attempted = False
+        # VAD needs faster-whisper's silero_vad asset. If it cannot be loaded
+        # (typically a packaging gap in a frozen build) transcription degrades
+        # to gate-only rather than failing every single utterance.
+        self._vad_enabled = TRANSCRIPTION_VAD_FILTER
         device, compute_type = self._resolve_device_config(device_mode)
         try:
             self._model = WhisperModel(str(model_path), device=device, compute_type=compute_type)
@@ -95,7 +99,23 @@ class Transcriber:
         except TranscriptionError:
             raise
         except Exception as exc:
-            if self._should_runtime_fallback_to_cpu(exc):
+            if self._vad_enabled and self._is_vad_asset_failure(exc):
+                logger.error(
+                    "Silero VAD asset could not be loaded (%s). Disabling VAD for the rest "
+                    "of this session and retrying - loud non-speech may now yield spurious "
+                    "text. In a packaged build this means faster-whisper data files were not "
+                    "bundled (see --collect-data in scripts/build.py).",
+                    type(exc).__name__,
+                )
+                self._vad_enabled = False
+                try:
+                    raw = self._run_model(audio)
+                except Exception as retry_exc:
+                    logger.error(
+                        "Transcription failed after disabling VAD: %s", type(retry_exc).__name__
+                    )
+                    raise TranscriptionError(f"Transcription failed: {retry_exc}") from retry_exc
+            elif self._should_runtime_fallback_to_cpu(exc):
                 logger.warning(
                     "CUDA runtime unavailable (%s). Falling back to CPU for transcription. "
                     "Check CUDA/cuBLAS runtime installation (for example missing cublas64_12.dll) "
@@ -122,10 +142,15 @@ class Transcriber:
         segments, _ = self._model.transcribe(
             audio,
             beam_size=TRANSCRIPTION_BEAM_SIZE,
-            vad_filter=TRANSCRIPTION_VAD_FILTER,
+            vad_filter=self._vad_enabled,
         )
         # Join with "" to preserve words split across segment boundaries.
         return "".join(seg.text for seg in segments)
+
+    @staticmethod
+    def _is_vad_asset_failure(exc: Exception) -> bool:
+        """Return True when the failure is the missing/unloadable Silero VAD asset."""
+        return "silero_vad" in str(exc).lower()
 
     @staticmethod
     def _apply_capture_gain(audio: np.ndarray, peak: float) -> np.ndarray:
