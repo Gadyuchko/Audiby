@@ -999,3 +999,149 @@ class TestSetAutostart:
 
         assert result is not None
         assert "autostart" in result.lower()
+
+
+# ---------------------------------------------------------------------------
+# Audio capture device selection
+# ---------------------------------------------------------------------------
+
+def _device_config(tmp_path, device_id):
+    """Config mock whose audio_device_id resolves to the given value."""
+    cfg = MagicMock()
+    cfg.config_dir = tmp_path
+    cfg.get.side_effect = lambda key, default=None: {
+        "model_size": "base",
+        "push_to_talk_key": "alt+z",
+        "audio_device_id": device_id,
+    }.get(key, default)
+    return cfg
+
+
+class TestConfiguredAudioDevice:
+    """The configured capture device must actually reach the recorder.
+
+    Regression guard: audio_device_id existed in config and constants but was
+    never read, so every session silently recorded from the OS default device.
+    """
+
+    def test_configured_device_is_passed_to_recorder(self, tmp_path, patch_components):
+        """A saved device id must be forwarded to AudioRecorder, not dropped."""
+        recorder_cls, _, _, _ = patch_components
+
+        ApplicationOrchestrator(_device_config(tmp_path, 2))
+
+        assert recorder_cls.call_args.kwargs["device_id"] == 2
+
+    def test_missing_device_config_falls_back_to_os_default(self, tmp_path, patch_components):
+        """Absent setting means follow the OS default, expressed as None."""
+        recorder_cls, _, _, _ = patch_components
+
+        ApplicationOrchestrator(_device_config(tmp_path, None))
+
+        assert recorder_cls.call_args.kwargs["device_id"] is None
+
+
+class TestSetAudioDevice:
+    """set_audio_device switches the live stream and survives bad selections."""
+
+    def test_switches_recorder_to_the_new_device(self, tmp_path, patch_components):
+        """Selecting a mic must reopen the stream on it."""
+        recorder_cls, _, _, _ = patch_components
+        orch = ApplicationOrchestrator(_device_config(tmp_path, None))
+
+        assert orch.set_audio_device(2) is None
+        recorder_cls.return_value.set_device.assert_called_once_with(2)
+
+    def test_is_a_noop_when_device_is_unchanged(self, tmp_path, patch_components):
+        """Saving settings without changing the mic must not disturb capture."""
+        recorder_cls, _, _, _ = patch_components
+        orch = ApplicationOrchestrator(_device_config(tmp_path, 2))
+
+        assert orch.set_audio_device(2) is None
+        recorder_cls.return_value.set_device.assert_not_called()
+
+    def test_returns_error_and_restores_previous_device_on_failure(self, tmp_path, patch_components):
+        """An unopenable mic must not leave the app with no working input."""
+        recorder_cls, _, _, _ = patch_components
+        recorder = recorder_cls.return_value
+        recorder.set_device.side_effect = [AudioDeviceError("cannot open"), None]
+        orch = ApplicationOrchestrator(_device_config(tmp_path, None))
+
+        error = orch.set_audio_device(2)
+
+        assert error is not None
+        assert "microphone" in error.lower()
+        # Second call restores the device that was working before the switch.
+        assert recorder.set_device.call_args_list[-1].args == (None,)
+
+    def test_keeps_previous_device_in_state_after_failure(self, tmp_path, patch_components):
+        """A rejected selection must not be remembered as the active device."""
+        recorder_cls, _, _, _ = patch_components
+        recorder_cls.return_value.set_device.side_effect = [AudioDeviceError("nope"), None]
+        orch = ApplicationOrchestrator(_device_config(tmp_path, None))
+
+        orch.set_audio_device(2)
+
+        assert orch._audio_device_id is None
+
+
+class TestApplySettingsAudioDevice:
+    """apply_settings persists the picked device only when it was applied."""
+
+    def test_persists_device_selection_on_success(self, tmp_path, patch_components, mocker):
+        """A working selection must be written to config."""
+        mocker.patch("audiby.app.TrayController")
+        mocker.patch("audiby.app.SettingsWindow")
+        mocker.patch("audiby.app.get_autostart")
+        cfg = _device_config(tmp_path, None)
+
+        orch = ApplicationOrchestrator(cfg)
+        result = orch.apply_settings("alt+z", False, "base", 2)
+
+        assert result is None
+        cfg.set.assert_any_call("audio_device_id", 2)
+
+    def test_does_not_persist_device_that_failed_to_open(self, tmp_path, patch_components, mocker):
+        """A mic that cannot be opened must not be saved as the choice."""
+        mocker.patch("audiby.app.TrayController")
+        mocker.patch("audiby.app.SettingsWindow")
+        mocker.patch("audiby.app.get_autostart")
+        recorder_cls, _, _, _ = patch_components
+        recorder_cls.return_value.set_device.side_effect = [AudioDeviceError("nope"), None]
+        cfg = _device_config(tmp_path, None)
+
+        orch = ApplicationOrchestrator(cfg)
+        result = orch.apply_settings("alt+z", False, "base", 2)
+
+        assert result is not None
+        device_calls = [c for c in cfg.set.call_args_list if c.args[0] == "audio_device_id"]
+        assert device_calls == []
+
+    def test_omitted_device_leaves_current_selection_untouched(self, tmp_path, patch_components, mocker):
+        """None is a real selection, so callers must opt in to changing it."""
+        mocker.patch("audiby.app.TrayController")
+        mocker.patch("audiby.app.SettingsWindow")
+        mocker.patch("audiby.app.get_autostart")
+        recorder_cls, _, _, _ = patch_components
+        cfg = _device_config(tmp_path, 2)
+
+        orch = ApplicationOrchestrator(cfg)
+        orch.apply_settings("alt+z", False, "base")
+
+        recorder_cls.return_value.set_device.assert_not_called()
+        device_calls = [c for c in cfg.set.call_args_list if c.args[0] == "audio_device_id"]
+        assert device_calls == []
+
+    def test_explicit_os_default_selection_is_applied(self, tmp_path, patch_components, mocker):
+        """Switching from a specific mic back to the OS default must work."""
+        mocker.patch("audiby.app.TrayController")
+        mocker.patch("audiby.app.SettingsWindow")
+        mocker.patch("audiby.app.get_autostart")
+        recorder_cls, _, _, _ = patch_components
+        cfg = _device_config(tmp_path, 2)
+
+        orch = ApplicationOrchestrator(cfg)
+        orch.apply_settings("alt+z", False, "base", None)
+
+        recorder_cls.return_value.set_device.assert_called_once_with(None)
+        cfg.set.assert_any_call("audio_device_id", None)

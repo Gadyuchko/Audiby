@@ -11,7 +11,13 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from audiby.constants import DEFAULT_SAMPLE_RATE, TRANSCRIPTION_BEAM_SIZE
+from audiby.constants import (
+    AUDIO_MAX_GAIN,
+    AUDIO_TARGET_PEAK,
+    DEFAULT_SAMPLE_RATE,
+    TRANSCRIPTION_BEAM_SIZE,
+)
+from audiby.core.transcriber import Transcriber
 from audiby.exceptions import ModelError, TranscriptionError
 
 
@@ -19,8 +25,19 @@ from audiby.exceptions import ModelError, TranscriptionError
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_audio(duration_sec: float = 1.0) -> np.ndarray:
-    """Return a float32 mono 16kHz buffer (1-D) of the given duration."""
+def _make_audio(duration_sec: float = 1.0, amplitude: float = 0.5) -> np.ndarray:
+    """Return an audible float32 mono 16kHz buffer (1-D) of the given duration.
+
+    A tone rather than zeros: the transcriber drops near-silent buffers before
+    they reach the model, so a zero buffer would never exercise the model path.
+    """
+    samples = int(DEFAULT_SAMPLE_RATE * duration_sec)
+    time_axis = np.arange(samples, dtype="float32") / DEFAULT_SAMPLE_RATE
+    return (amplitude * np.sin(2 * np.pi * 440.0 * time_axis)).astype("float32")
+
+
+def _make_silence(duration_sec: float = 1.0) -> np.ndarray:
+    """Return a float32 mono buffer at the level a muted/idle mic produces."""
     samples = int(DEFAULT_SAMPLE_RATE * duration_sec)
     return np.zeros(samples, dtype="float32")
 
@@ -30,6 +47,36 @@ def _make_segment(text: str) -> MagicMock:
     seg = MagicMock()
     seg.text = text
     return seg
+
+
+@pytest.fixture
+def make_transcriber():
+    """Factory fixture creating a Transcriber with WhisperModel mocked.
+
+    Returns (transcriber, mock_model, text_queue). Patches stay active until
+    test teardown.
+    """
+    patches = []
+
+    def _factory(segments=None, text_queue=None):
+        mock_model = MagicMock()
+        mock_model.transcribe.return_value = (iter(segments or []), None)
+        patcher = patch("audiby.core.transcriber.WhisperModel", return_value=mock_model)
+        patcher.start()
+        patches.append(patcher)
+
+        from audiby.core.transcriber import Transcriber
+
+        tq = text_queue or queue.Queue()
+        transcriber = Transcriber(
+            audio_queue=queue.Queue(), text_queue=tq, model_path="/fake/model"
+        )
+        return transcriber, mock_model, tq
+
+    yield _factory
+
+    for patcher in patches:
+        patcher.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -541,3 +588,185 @@ class TestDeviceModePolicy:
             )
             _, kwargs = mock_cls.call_args
             assert kwargs["device"] == "cpu"
+
+
+# ---------------------------------------------------------------------------
+# Silence gate: near-silent audio must never reach the model
+# ---------------------------------------------------------------------------
+
+class TestSilenceGate:
+    """Whisper invents canned phrases from silence, so quiet audio is dropped.
+
+    This is the regression guard for the observed failure: a muted/wrong
+    microphone produced " Thank you." and " Bye." which were then pasted into
+    the user's active window as if they had been dictated.
+    """
+
+    def test_silent_buffer_is_not_sent_to_the_model(self, make_transcriber):
+        """A muted mic must cost zero model passes."""
+        t, mock_model, _ = make_transcriber(segments=[_make_segment(" Thank you.")])
+
+        t.transcribe(_make_silence())
+
+        mock_model.transcribe.assert_not_called()
+
+    def test_silent_buffer_queues_no_text(self, make_transcriber):
+        """Nothing may be queued for injection when the mic captured silence."""
+        t, _, text_queue = make_transcriber(segments=[_make_segment(" Thank you.")])
+
+        t.transcribe(_make_silence())
+
+        assert text_queue.empty()
+
+    def test_empty_buffer_is_treated_as_silence(self, make_transcriber):
+        """A zero-length buffer must be dropped, not crash on amplitude maths."""
+        t, mock_model, text_queue = make_transcriber()
+
+        t.transcribe(np.array([], dtype="float32"))
+
+        mock_model.transcribe.assert_not_called()
+        assert text_queue.empty()
+
+    def test_room_noise_floor_is_treated_as_silence(self, make_transcriber):
+        """Measured real-world idle level (peak ~0.0025) must not transcribe."""
+        t, mock_model, text_queue = make_transcriber(segments=[_make_segment(" Bye.")])
+
+        t.transcribe(_make_audio(amplitude=0.0025))
+
+        mock_model.transcribe.assert_not_called()
+        assert text_queue.empty()
+
+    def test_vad_filter_is_enabled_for_the_decode_pass(self, make_transcriber):
+        """Loud non-speech passes the amplitude gate, so VAD must strip it."""
+        t, mock_model, _ = make_transcriber(segments=[_make_segment("words")])
+
+        t.transcribe(_make_audio(amplitude=0.3))
+
+        assert mock_model.transcribe.call_args.kwargs["vad_filter"] is True
+
+    def test_audible_speech_still_transcribes(self, make_transcriber):
+        """The gate must not swallow real dictation."""
+        t, mock_model, text_queue = make_transcriber(segments=[_make_segment("hello there")])
+
+        t.transcribe(_make_audio(amplitude=0.3))
+
+        mock_model.transcribe.assert_called_once()
+        assert text_queue.get_nowait() == "hello there"
+
+    def test_quiet_but_audible_speech_still_transcribes(self, make_transcriber):
+        """A soft speaker must not be mistaken for a dead microphone."""
+        t, mock_model, text_queue = make_transcriber(segments=[_make_segment("quiet words")])
+
+        t.transcribe(_make_audio(amplitude=0.05))
+
+        mock_model.transcribe.assert_called_once()
+        assert text_queue.get_nowait() == "quiet words"
+
+    def test_logs_actionable_hint_when_audio_is_silent(self, make_transcriber, caplog):
+        """The log must point at the microphone - this took a long time to diagnose."""
+        t, _, _ = make_transcriber()
+
+        with caplog.at_level(logging.INFO, logger="audiby.core.transcriber"):
+            t.transcribe(_make_silence())
+
+        assert "below silence threshold" in caplog.text
+        assert "microphone" in caplog.text
+
+    def test_logs_measured_levels_for_diagnosis(self, make_transcriber, caplog):
+        """Amplitude must be observable in logs, not merely inferable."""
+        t, _, _ = make_transcriber(segments=[_make_segment("audible")])
+
+        with caplog.at_level(logging.DEBUG, logger="audiby.core.transcriber"):
+            t.transcribe(_make_audio(amplitude=0.3))
+
+        assert "peak=" in caplog.text
+        assert "rms=" in caplog.text
+
+    def test_silence_gate_never_logs_transcript_text(self, make_transcriber, caplog):
+        """Privacy rule holds on the drop path too."""
+        t, _, _ = make_transcriber(segments=[_make_segment(" Thank you.")])
+
+        with caplog.at_level(logging.DEBUG, logger="audiby.core.transcriber"):
+            t.transcribe(_make_silence())
+
+        assert "Thank you" not in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Capture gain: consistent level regardless of mic sensitivity or distance
+# ---------------------------------------------------------------------------
+
+class TestCaptureGain:
+    """Quiet-but-valid audio is normalized before decoding.
+
+    Regression guard: at normal talking distance a headset produced rms 0.0044
+    and "how about now" decoded as "OH"; the same voice closer in produced rms
+    0.011 and decoded perfectly. Whisper gets no automatic gain control, so the
+    pipeline supplies it.
+    """
+
+    def test_quiet_audio_is_boosted_toward_the_target_peak(self):
+        """A quiet buffer must reach the target level."""
+        quiet = _make_audio(amplitude=0.04)
+
+        boosted = Transcriber._apply_capture_gain(quiet, 0.04)
+
+        assert float(np.abs(boosted).max()) == pytest.approx(AUDIO_TARGET_PEAK, rel=1e-3)
+
+    def test_gain_is_capped_for_extremely_quiet_audio(self):
+        """A hard cap stops a barely-audible buffer being blown up into noise."""
+        very_quiet = _make_audio(amplitude=0.001)
+
+        boosted = Transcriber._apply_capture_gain(very_quiet, 0.001)
+
+        applied_gain = float(np.abs(boosted).max()) / 0.001
+        assert applied_gain == pytest.approx(AUDIO_MAX_GAIN, rel=1e-3)
+
+    def test_audio_at_or_above_target_is_passed_through_untouched(self):
+        """A loud speaker must never be attenuated."""
+        loud = _make_audio(amplitude=0.6)
+
+        result = Transcriber._apply_capture_gain(loud, 0.6)
+
+        assert result is loud
+
+    def test_gain_preserves_float32_dtype(self):
+        """faster-whisper requires float32 - scaling must not promote to float64."""
+        boosted = Transcriber._apply_capture_gain(_make_audio(amplitude=0.04), 0.04)
+
+        assert boosted.dtype == np.float32
+
+    def test_zero_peak_buffer_is_returned_unchanged(self):
+        """Guard the divide - a zero buffer must not produce inf or nan."""
+        silence = _make_silence()
+
+        result = Transcriber._apply_capture_gain(silence, 0.0)
+
+        assert result is silence
+
+    def test_model_receives_the_gained_buffer(self, make_transcriber):
+        """The boost must actually reach the decoder, not just be computed."""
+        t, mock_model, _ = make_transcriber(segments=[_make_segment("words")])
+
+        t.transcribe(_make_audio(amplitude=0.04))
+
+        decoded = mock_model.transcribe.call_args.args[0]
+        assert float(np.abs(decoded).max()) == pytest.approx(AUDIO_TARGET_PEAK, rel=1e-3)
+
+    def test_gain_runs_after_the_silence_gate(self, make_transcriber):
+        """Silence must be dropped before gain, never amplified into speech."""
+        t, mock_model, text_queue = make_transcriber(segments=[_make_segment(" Thank you.")])
+
+        t.transcribe(_make_audio(amplitude=0.002))
+
+        mock_model.transcribe.assert_not_called()
+        assert text_queue.empty()
+
+    def test_gain_is_logged_for_diagnosis(self, make_transcriber, caplog):
+        """The applied gain must be visible when explaining a bad transcription."""
+        t, _, _ = make_transcriber(segments=[_make_segment("words")])
+
+        with caplog.at_level(logging.DEBUG, logger="audiby.core.transcriber"):
+            t.transcribe(_make_audio(amplitude=0.04))
+
+        assert "Applying capture gain" in caplog.text

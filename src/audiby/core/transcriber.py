@@ -12,7 +12,15 @@ import ctranslate2
 import numpy as np
 from faster_whisper import WhisperModel
 
-from audiby.constants import TRANSCRIPTION_BEAM_SIZE, TRANSCRIPTION_DEVICE_AUTO
+from audiby.constants import (
+    AUDIO_MAX_GAIN,
+    AUDIO_TARGET_PEAK,
+    SILENCE_PEAK_THRESHOLD,
+    SILENCE_RMS_THRESHOLD,
+    TRANSCRIPTION_BEAM_SIZE,
+    TRANSCRIPTION_DEVICE_AUTO,
+    TRANSCRIPTION_VAD_FILTER,
+)
 from audiby.exceptions import ModelError, TranscriptionError
 
 logger = logging.getLogger(__name__)
@@ -65,10 +73,25 @@ class Transcriber:
                 f"Expected 1-D mono buffer, got {audio.ndim}-D shape {audio.shape}"
             )
 
+        # Gate on signal level before spending a model pass on it: Whisper
+        # invents canned phrases from near-silence instead of returning empty.
+        peak, rms = self._measure_level(audio)
+        logger.debug("Audio level: samples=%d peak=%.5f rms=%.5f", audio.size, peak, rms)
+        if peak < SILENCE_PEAK_THRESHOLD or rms < SILENCE_RMS_THRESHOLD:
+            logger.info(
+                "Audio below silence threshold (peak=%.5f rms=%.5f) - "
+                "skipping transcription. Check that the selected microphone is "
+                "the one you speak into and is not muted.",
+                peak,
+                rms,
+            )
+            return
+
+        # Bring quiet input up to a consistent level before decoding.
+        audio = self._apply_capture_gain(audio, peak)
+
         try:
-            segments, info = self._model.transcribe(audio, beam_size=TRANSCRIPTION_BEAM_SIZE)
-            # Join with "" to preserve words split across segment boundaries.
-            raw = "".join(seg.text for seg in segments)
+            raw = self._run_model(audio)
         except TranscriptionError:
             raise
         except Exception as exc:
@@ -81,8 +104,7 @@ class Transcriber:
                 )
                 self._fallback_model_to_cpu()
                 try:
-                    segments, info = self._model.transcribe(audio, beam_size=TRANSCRIPTION_BEAM_SIZE)
-                    raw = "".join(seg.text for seg in segments)
+                    raw = self._run_model(audio)
                 except Exception as retry_exc:
                     logger.error("Transcription failed after CPU fallback: %s", type(retry_exc).__name__)
                     raise TranscriptionError(f"Transcription failed: {retry_exc}") from retry_exc
@@ -94,6 +116,41 @@ class Transcriber:
         if text:
             self._text_queue.put(text)
         logger.info("Transcription completed, text length: %d", len(text))
+
+    def _run_model(self, audio: np.ndarray) -> str:
+        """Run one decode pass and return the joined segment text."""
+        segments, _ = self._model.transcribe(
+            audio,
+            beam_size=TRANSCRIPTION_BEAM_SIZE,
+            vad_filter=TRANSCRIPTION_VAD_FILTER,
+        )
+        # Join with "" to preserve words split across segment boundaries.
+        return "".join(seg.text for seg in segments)
+
+    @staticmethod
+    def _apply_capture_gain(audio: np.ndarray, peak: float) -> np.ndarray:
+        """Scale a quiet buffer toward AUDIO_TARGET_PEAK, capped by AUDIO_MAX_GAIN.
+
+        Boost only - audio already at or above the target is passed through
+        untouched, so a loud speaker is never attenuated.
+        """
+        if peak <= 0.0:
+            return audio
+        gain = min(AUDIO_TARGET_PEAK / peak, AUDIO_MAX_GAIN)
+        if gain <= 1.0:
+            return audio
+
+        logger.debug(
+            "Applying capture gain x%.2f (peak %.5f -> %.5f)", gain, peak, peak * gain
+        )
+        return (audio * gain).astype(np.float32)
+
+    @staticmethod
+    def _measure_level(audio: np.ndarray) -> tuple[float, float]:
+        """Return (peak, rms) amplitude for a mono float32 buffer."""
+        if audio.size == 0:
+            return 0.0, 0.0
+        return float(np.abs(audio).max()), float(np.sqrt(np.mean(np.square(audio))))
 
     def _fallback_model_to_cpu(self) -> None:
         """Switch model instance to CPU once after CUDA runtime failure in auto mode."""

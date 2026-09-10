@@ -8,8 +8,9 @@ from tkinter import ttk
 from audiby.config import Config
 from collections.abc import Callable
 from audiby.constants import CONFIG_KEY_HOTKEY, CONFIG_KEY_AUTOSTART, DEFAULT_AUTOSTART, SUPPORTED_MODELS, \
-    CONFIG_KEY_MODEL, DEFAULT_MODEL_SIZE
+    CONFIG_KEY_MODEL, DEFAULT_MODEL_SIZE, CONFIG_KEY_AUDIO_DEVICE, DEFAULT_AUDIO_DEVICE
 from audiby.core import model_manager
+from audiby.core.audio_recorder import list_input_devices
 from audiby.ui.download_dialog import DownloadDialog
 from pynput.keyboard import HotKey, Key, Listener as KeyboardListener
 
@@ -34,7 +35,11 @@ class SettingsWindow:
         "home", "end", "page_up", "page_down", "left", "right", "up", "down",
     }
 
-    def __init__(self, config: Config, on_save: Callable[[str, bool, str], str | None]):
+    def __init__(
+        self,
+        config: Config,
+        on_save: Callable[[str, bool, str, int | None], str | None],
+    ):
         self._config = config
         self._on_save = on_save
         self._hotkey_label = None
@@ -48,6 +53,11 @@ class SettingsWindow:
         self._model_label = None
         self._model_value = None
         self._model_dropdown = None
+
+        self._device_label = None
+        self._device_value = None
+        self._device_dropdown = None
+        self._device_ids_by_label: dict[str, int | None] = {}
 
         self._capturing = False
         self._pressed_modifiers = set()
@@ -112,6 +122,10 @@ class SettingsWindow:
         self._model_value = tk.StringVar()
         self._model_value.set(self._config.get(CONFIG_KEY_MODEL, DEFAULT_MODEL_SIZE))
 
+        self._device_value = tk.StringVar()
+        device_labels = self._load_device_choices()
+        self._device_value.set(self._resolve_current_device_label(device_labels))
+
         # hotkey display — click to start capturing a new combo
         self._hotkey_value = tk.Entry(self._window, textvariable=self._bind_hotkey, state="readonly")
         self._hotkey_value.grid(row=0, column=1, padx=5, pady=5)
@@ -145,9 +159,21 @@ class SettingsWindow:
         self._model_dropdown.grid(row=2, column=1, padx=5, pady=5)
         self._model_dropdown.bind('<<ComboboxSelected>>', self._on_model_selected)
 
+        # microphone dropdown
+        self._device_label = tk.Label(self._window, text="Microphone:")
+        self._device_label.grid(row=3, column=0, padx=5, pady=5)
+        self._device_dropdown = ttk.Combobox(
+            self._window,
+            textvariable=self._device_value,
+            values=device_labels,
+            state="readonly",
+            width=38,
+        )
+        self._device_dropdown.grid(row=3, column=1, padx=5, pady=5)
+
         # save button
         self._save_button = tk.Button(self._window, text="Save", command=self._on_save_clicked)
-        self._save_button.grid(row=4, column=0, columnspan=2, pady=10)
+        self._save_button.grid(row=5, column=0, columnspan=2, pady=10)
 
         # position window near bottom-right (near system tray)
         self._position_window()
@@ -172,6 +198,9 @@ class SettingsWindow:
             self._model_label = None
             self._model_value = None
             self._model_dropdown = None
+            self._device_label = None
+            self._device_value = None
+            self._device_dropdown = None
             # quit() exits mainloop(), destroy() releases the window.
             # Both are needed in this order — calling destroy() alone leaves
             # mainloop() running and the GUI thread hangs indefinitely.
@@ -367,7 +396,7 @@ class SettingsWindow:
         if self._error_label is None:
             return
         self._error_label.config(text=message)
-        self._error_label.grid(row=3, column=0, columnspan=2, sticky="ew", padx=5, pady=(0, 5))
+        self._error_label.grid(row=4, column=0, columnspan=2, sticky="ew", padx=5, pady=(0, 5))
         self._position_window()
 
     def _position_window(self) -> None:
@@ -405,12 +434,49 @@ class SettingsWindow:
             previous = self._config.get(CONFIG_KEY_MODEL, DEFAULT_MODEL_SIZE)
             self._model_value.set(previous)
 
+    def _load_device_choices(self) -> list[str]:
+        """Enumerate input devices and cache the label -> device id mapping."""
+        devices = list_input_devices()
+        self._device_ids_by_label = {device.label: device.device_id for device in devices}
+        logger.debug("Loaded %d audio input device choices", len(devices))
+        return [device.label for device in devices]
+
+    def _resolve_current_device_label(self, device_labels: list[str]) -> str:
+        """Map the configured device id back to its picker label.
+
+        A saved device may be absent now (headset powered off, dock removed).
+        In that case a placeholder row is added instead of silently snapping the
+        user back to the system default, which would hide their real setting.
+        """
+        configured = self._config.get(CONFIG_KEY_AUDIO_DEVICE, DEFAULT_AUDIO_DEVICE)
+        for label, device_id in self._device_ids_by_label.items():
+            if device_id == configured:
+                return label
+
+        placeholder = f"Device {configured} (not connected)"
+        self._device_ids_by_label[placeholder] = configured
+        device_labels.append(placeholder)
+        logger.warning("Configured audio device %s is not currently available", configured)
+        return placeholder
+
+    def _selected_device_id(self) -> int | None:
+        """Resolve the chosen picker label back to a device id."""
+        return self._device_ids_by_label.get(self._device_value.get(), DEFAULT_AUDIO_DEVICE)
+
     def _on_save_clicked(self) -> None:
         new_hotkey = self._bind_hotkey.get()
         autostart = self._autostart_value.get()
         model = self._model_value.get()
-        logger.info("Saving new configuration: hotkey -> %s | autostart -> %s | model -> %s", new_hotkey, autostart, model)
-        error = self._on_save(new_hotkey, autostart, model)
+        device_id = self._selected_device_id()
+        logger.info(
+            "Saving new configuration: hotkey -> %s | autostart -> %s | model -> %s | mic -> %s (id %s)",
+            new_hotkey,
+            autostart,
+            model,
+            self._device_value.get(),
+            device_id,
+        )
+        error = self._on_save(new_hotkey, autostart, model, device_id)
         if error:
             self._show_error(error)
             return

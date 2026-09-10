@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from audiby.constants import INJECTION_MODIFIER_SETTLE_DELAY
 from audiby.exceptions import InjectionError
 
 
@@ -18,6 +19,33 @@ from audiby.exceptions import InjectionError
 # ---------------------------------------------------------------------------
 
 _P = "audiby.core.text_injector"
+
+
+def _chord_sequence(mock_ctrl) -> list[tuple[str, object]]:
+    """Ordered (method, key) pairs for the paste chord.
+
+    inject() first best-effort releases stray modifiers, so the chord itself is
+    everything from the first press() call onward.
+    """
+    calls = [
+        (name, args[0] if args else None)
+        for name, args, _ in mock_ctrl.mock_calls
+        if name in ("press", "release")
+    ]
+    for index, (name, _) in enumerate(calls):
+        if name == "press":
+            return calls[index:]
+    return []
+
+
+def _raise_on_v(error: Exception):
+    """Controller.press side effect that fails only on the "v" tap."""
+
+    def _press(key):
+        if key == "v":
+            raise error
+
+    return _press
 
 
 class _InjectorContext:
@@ -104,8 +132,14 @@ class TestTextInjectorHappyPath:
         injector, _, mock_ctrl, _ = make_injector(text_queue=tq, clipboard_mod=mock_cb)
         injector.inject()
 
-        # Controller must have used pressed(Key.ctrl) context manager
-        mock_ctrl.pressed.assert_called_once()
+        # Modifier must be held down across the "v" tap and released after it.
+        from pynput.keyboard import Key
+        assert _chord_sequence(mock_ctrl) == [
+            ("press", Key.ctrl_l),
+            ("press", "v"),
+            ("release", "v"),
+            ("release", Key.ctrl_l),
+        ]
 
     def test_inject_order_backup_set_paste_restore(self, make_injector):
         """Operations must occur in order: backup → set_text → Ctrl+V → restore."""
@@ -119,11 +153,13 @@ class TestTextInjectorHappyPath:
         mock_cb.restore.side_effect = lambda b: call_order.append("restore")
 
         mock_ctrl = MagicMock()
-        # pressed() returns a context manager; entering it = "paste"
-        ctx = MagicMock()
-        ctx.__enter__ = lambda s: call_order.append("paste")
-        ctx.__exit__ = MagicMock(return_value=False)
-        mock_ctrl.pressed.return_value = ctx
+
+        # The modifier is pressed explicitly now, so the "v" tap marks the paste.
+        def _record_paste(key):
+            if key == "v":
+                call_order.append("paste")
+
+        mock_ctrl.press.side_effect = _record_paste
 
         injector, _, _, _ = make_injector(
             text_queue=tq, clipboard_mod=mock_cb, controller=mock_ctrl,
@@ -177,10 +213,7 @@ class TestClipboardRestoreGuarantee:
         mock_cb.backup.return_value = "saved"
 
         mock_ctrl = MagicMock()
-        ctx = MagicMock()
-        ctx.__enter__ = MagicMock(side_effect=OSError("keyboard error"))
-        ctx.__exit__ = MagicMock(return_value=False)
-        mock_ctrl.pressed.return_value = ctx
+        mock_ctrl.press.side_effect = _raise_on_v(OSError("keyboard error"))
 
         injector, _, _, _ = make_injector(
             text_queue=tq, clipboard_mod=mock_cb, controller=mock_ctrl,
@@ -237,10 +270,7 @@ class TestInjectionErrorHandling:
         mock_cb.backup.return_value = "old"
 
         mock_ctrl = MagicMock()
-        ctx = MagicMock()
-        ctx.__enter__ = MagicMock(side_effect=RuntimeError("pynput crash"))
-        ctx.__exit__ = MagicMock(return_value=False)
-        mock_ctrl.pressed.return_value = ctx
+        mock_ctrl.press.side_effect = _raise_on_v(RuntimeError("pynput crash"))
 
         injector, _, _, _ = make_injector(
             text_queue=tq, clipboard_mod=mock_cb, controller=mock_ctrl,
@@ -418,10 +448,6 @@ class TestPasteChordResolution:
         mock_cb = MagicMock()
         mock_cb.backup.return_value = "saved"
         mock_ctrl = MagicMock()
-        ctx = MagicMock()
-        ctx.__enter__ = MagicMock(return_value=None)
-        ctx.__exit__ = MagicMock(return_value=False)
-        mock_ctrl.pressed.return_value = ctx
 
         with patch(f"{_P}.PASTE_CHORD", "cmd+v"):
             injector, _, _, _ = make_injector(
@@ -430,7 +456,8 @@ class TestPasteChordResolution:
             injector.inject()
 
         from pynput.keyboard import Key
-        mock_ctrl.pressed.assert_called_once_with(Key.cmd)
+        assert _chord_sequence(mock_ctrl)[0] == ("press", Key.cmd)
+        assert _chord_sequence(mock_ctrl)[-1] == ("release", Key.cmd)
 
     def test_uses_ctrl_key_when_paste_chord_is_ctrl_v(self, make_injector):
         """On Windows, paste chord ctrl+v must resolve to Key.ctrl_l."""
@@ -439,10 +466,6 @@ class TestPasteChordResolution:
         mock_cb = MagicMock()
         mock_cb.backup.return_value = "saved"
         mock_ctrl = MagicMock()
-        ctx = MagicMock()
-        ctx.__enter__ = MagicMock(return_value=None)
-        ctx.__exit__ = MagicMock(return_value=False)
-        mock_ctrl.pressed.return_value = ctx
 
         with patch(f"{_P}.PASTE_CHORD", "ctrl+v"):
             injector, _, _, _ = make_injector(
@@ -451,7 +474,8 @@ class TestPasteChordResolution:
             injector.inject()
 
         from pynput.keyboard import Key
-        mock_ctrl.pressed.assert_called_once_with(Key.ctrl_l)
+        assert _chord_sequence(mock_ctrl)[0] == ("press", Key.ctrl_l)
+        assert _chord_sequence(mock_ctrl)[-1] == ("release", Key.ctrl_l)
 
 
 class TestAltNeutralization:
@@ -464,10 +488,6 @@ class TestAltNeutralization:
         mock_cb = MagicMock()
         mock_cb.backup.return_value = "saved"
         mock_ctrl = MagicMock()
-        ctx = MagicMock()
-        ctx.__enter__ = MagicMock(return_value=None)
-        ctx.__exit__ = MagicMock(return_value=False)
-        mock_ctrl.pressed.return_value = ctx
 
         injector, _, _, _ = make_injector(
             text_queue=tq,
@@ -490,10 +510,6 @@ class TestAltNeutralization:
         mock_cb = MagicMock()
         mock_cb.backup.return_value = "saved"
         mock_ctrl = MagicMock()
-        ctx = MagicMock()
-        ctx.__enter__ = MagicMock(return_value=None)
-        ctx.__exit__ = MagicMock(return_value=False)
-        mock_ctrl.pressed.return_value = ctx
 
         injector, _, _, _ = make_injector(
             text_queue=tq,
@@ -506,3 +522,62 @@ class TestAltNeutralization:
 
         from pynput.keyboard import Key
         assert not any(c.args and c.args[0] == Key.alt_l for c in mock_ctrl.press.call_args_list)
+
+
+# ---------------------------------------------------------------------------
+# Paste chord timing and modifier safety
+# ---------------------------------------------------------------------------
+
+class TestPasteChordTiming:
+    """The modifier must be settled before "v" and always released after.
+
+    Regression guard: with no gap between modifier-down and the keystroke, the
+    target window occasionally processed "v" first and received a bare "v"
+    instead of a paste.
+    """
+
+    def test_settle_delay_separates_modifier_from_keystroke(self, make_injector):
+        """A delay must sit between pressing the modifier and tapping "v"."""
+        tq = queue.Queue()
+        tq.put("timed")
+        mock_cb = MagicMock()
+        mock_cb.backup.return_value = "old"
+
+        events = []
+        mock_ctrl = MagicMock()
+        mock_ctrl.press.side_effect = lambda key: events.append(("press", key))
+
+        injector, _, _, _ = make_injector(
+            text_queue=tq, clipboard_mod=mock_cb, controller=mock_ctrl,
+        )
+        with patch(f"{_P}.time.sleep", side_effect=lambda d: events.append(("sleep", d))):
+            injector.inject()
+
+        from pynput.keyboard import Key
+        modifier_index = events.index(("press", Key.ctrl_l))
+        v_index = events.index(("press", "v"))
+        slept_between = [
+            event for event in events[modifier_index + 1:v_index] if event[0] == "sleep"
+        ]
+        assert slept_between, "no settle delay between modifier press and 'v'"
+        assert slept_between[0][1] == INJECTION_MODIFIER_SETTLE_DELAY
+
+    def test_modifier_released_even_when_keystroke_raises(self, make_injector):
+        """A failed tap must not leave the modifier stuck down for the user."""
+        tq = queue.Queue()
+        tq.put("boom")
+        mock_cb = MagicMock()
+        mock_cb.backup.return_value = "old"
+
+        mock_ctrl = MagicMock()
+        mock_ctrl.press.side_effect = _raise_on_v(OSError("tap failed"))
+
+        injector, _, _, _ = make_injector(
+            text_queue=tq, clipboard_mod=mock_cb, controller=mock_ctrl,
+        )
+
+        with pytest.raises(InjectionError):
+            injector.inject()
+
+        from pynput.keyboard import Key
+        assert ("release", Key.ctrl_l) in _chord_sequence(mock_ctrl)

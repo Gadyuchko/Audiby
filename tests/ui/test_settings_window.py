@@ -14,6 +14,8 @@ from unittest.mock import MagicMock, patch, call
 
 import pytest
 
+from audiby.core.audio_recorder import AudioInputDevice
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -58,6 +60,24 @@ def mock_tk(mocker):
         "StringVar": mock_stringvar_cls,
         "BooleanVar": mock_booleanvar_cls,
     }
+
+
+# Device enumeration touches real audio hardware, so every test in this module
+# runs against a fixed synthetic device table instead.
+_PICKER_DEVICES = [
+    AudioInputDevice(None, "System default"),
+    AudioInputDevice(1, "Microphone Array (Realtek(R) Audio)"),
+    AudioInputDevice(2, "Microphone (Razer BlackShark V2 Pro 2.4)"),
+]
+
+
+@pytest.fixture(autouse=True)
+def stub_input_devices(mocker):
+    """Keep the microphone picker off real hardware."""
+    return mocker.patch(
+        "audiby.ui.settings_window.list_input_devices",
+        return_value=list(_PICKER_DEVICES),
+    )
 
 
 @pytest.fixture
@@ -405,7 +425,7 @@ class TestSaveButton:
         settings_window._on_hotkey_captured("alt+z")
         settings_window._on_save_clicked()
 
-        mock_on_save.assert_called_once_with("alt+z", False, "base")
+        mock_on_save.assert_called_once_with("alt+z", False, "base", None)
 
     def test_save_closes_window_on_success(self, settings_window, mock_config, mock_on_save, mock_tk):
         """Window must close after successful save (callback returns None)."""
@@ -432,7 +452,7 @@ class TestSaveButton:
         """Save with no changes should still invoke the callback with current values."""
         _open_window(settings_window)
         settings_window._on_save_clicked()
-        mock_on_save.assert_called_once_with("ctrl+space", False, "base")
+        mock_on_save.assert_called_once_with("ctrl+space", False, "base", None)
 
     def test_error_label_wraps_and_repositions_window(self, settings_window, mock_tk):
         """Showing an error should wrap text and recompute anchored geometry."""
@@ -443,7 +463,7 @@ class TestSaveButton:
         )
 
         settings_window._error_label.grid.assert_called_with(
-            row=3, column=0, columnspan=2, sticky="ew", padx=5, pady=(0, 5)
+            row=4, column=0, columnspan=2, sticky="ew", padx=5, pady=(0, 5)
         )
         assert mock_tk["Tk"].return_value.geometry.call_count >= 2
 
@@ -523,3 +543,85 @@ class TestUnsavedChangesDiscard:
         settings_window._on_hotkey_captured("alt+z")
         mock_config.set.assert_not_called()
         mock_config.save.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Microphone picker
+# ---------------------------------------------------------------------------
+
+class TestMicrophonePicker:
+    """The picker exposes capture devices and round-trips the configured one.
+
+    Regression guard: the app had no way to choose a microphone, so it always
+    recorded from whatever the OS default happened to be at launch.
+    """
+
+    def test_picker_offers_every_enumerated_device(self, settings_window, mock_tk):
+        """All enumerated input devices must be selectable."""
+        _open_window(settings_window)
+
+        combobox_values = [
+            kwargs.get("values")
+            for _, kwargs in mock_tk["Combobox"].call_args_list
+            if kwargs.get("values") is not None
+        ]
+        assert [device.label for device in _PICKER_DEVICES] in combobox_values
+
+    def test_defaults_to_os_default_when_unset(self, settings_window, mock_tk):
+        """No saved device means the picker shows the system default row."""
+        _open_window(settings_window)
+
+        assert settings_window._device_value.get() == "System default"
+        assert settings_window._selected_device_id() is None
+
+    def test_reflects_configured_device(self, mock_tk, mock_on_save):
+        """A saved device id must be shown as its human-readable label."""
+        cfg = MagicMock()
+        cfg.get.side_effect = lambda key, default=None: {
+            "push_to_talk_key": "ctrl+space",
+            "start_on_boot": False,
+            "model_size": "base",
+            "audio_device_id": 2,
+        }.get(key, default)
+
+        from audiby.ui.settings_window import SettingsWindow
+        sw = SettingsWindow(config=cfg, on_save=mock_on_save)
+        _open_window(sw)
+
+        assert sw._device_value.get() == "Microphone (Razer BlackShark V2 Pro 2.4)"
+        assert sw._selected_device_id() == 2
+
+    def test_disconnected_device_is_shown_rather_than_silently_reset(self, mock_tk, mock_on_save):
+        """A powered-off headset must not quietly revert the user's choice."""
+        cfg = MagicMock()
+        cfg.get.side_effect = lambda key, default=None: {
+            "push_to_talk_key": "ctrl+space",
+            "start_on_boot": False,
+            "model_size": "base",
+            "audio_device_id": 99,
+        }.get(key, default)
+
+        from audiby.ui.settings_window import SettingsWindow
+        sw = SettingsWindow(config=cfg, on_save=mock_on_save)
+        _open_window(sw)
+
+        assert sw._device_value.get() == "Device 99 (not connected)"
+        assert sw._selected_device_id() == 99
+
+    def test_save_forwards_selected_device_id(self, settings_window, mock_tk, mock_on_save):
+        """Picking a mic must hand its id, not its label, to the callback."""
+        _open_window(settings_window)
+        settings_window._device_value.set("Microphone (Razer BlackShark V2 Pro 2.4)")
+
+        settings_window._on_save_clicked()
+
+        assert mock_on_save.call_args.args[3] == 2
+
+    def test_save_forwards_none_for_os_default(self, settings_window, mock_tk, mock_on_save):
+        """The system-default row must map back to None, not a label string."""
+        _open_window(settings_window)
+        settings_window._device_value.set("System default")
+
+        settings_window._on_save_clicked()
+
+        assert mock_on_save.call_args.args[3] is None

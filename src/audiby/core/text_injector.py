@@ -9,6 +9,7 @@ from audiby.constants import (
     ALT_NEUTRALIZATION_ESC,
     ALT_NEUTRALIZATION_NONE,
     ALT_NEUTRALIZATION_TAP_ALT,
+    INJECTION_MODIFIER_SETTLE_DELAY,
     INJECTION_PASTE_DELAY,
     PASTE_CHORD,
 )
@@ -51,9 +52,7 @@ class TextInjector:
             backup_captured = True
             self._clipboard.set_text(text)
             self._neutralize_modifiers_if_needed()
-            with self._keyboard.pressed(self._paste_modifier()):
-                self._keyboard.press("v")
-                self._keyboard.release("v")
+            self._send_paste_chord()
             time.sleep(INJECTION_PASTE_DELAY)
             logger.info("Injection key sequence sent (text length: %d)", len(text))
 
@@ -66,6 +65,24 @@ class TextInjector:
         finally:
             if backup_captured:
                 self._clipboard.restore(backup_text)
+
+    def _send_paste_chord(self) -> None:
+        """Send the paste chord with the modifier held around the "v" tap.
+
+        The modifier is pressed explicitly rather than via `keyboard.pressed()`
+        so a settle delay can sit between modifier-down and the keystroke -
+        without it the target window can process the "v" first and receive a
+        bare "v" instead of a paste. try/finally guarantees the modifier is
+        released even if the tap raises, so no modifier is left stuck down.
+        """
+        modifier = self._paste_modifier()
+        self._keyboard.press(modifier)
+        try:
+            time.sleep(INJECTION_MODIFIER_SETTLE_DELAY)
+            self._keyboard.press("v")
+            self._keyboard.release("v")
+        finally:
+            self._keyboard.release(modifier)
 
     def _neutralize_modifiers_if_needed(self) -> None:
         """Release held modifiers; optionally neutralize Alt menu-mode before paste."""

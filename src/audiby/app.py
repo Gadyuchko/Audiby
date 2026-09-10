@@ -31,9 +31,11 @@ from audiby.ui.settings_window import SettingsWindow
 from audiby.config import Config
 from audiby.constants import (
     CONFIG_KEY_ALT_NEUTRALIZATION,
+    CONFIG_KEY_AUDIO_DEVICE,
     CONFIG_KEY_HOTKEY,
     CONFIG_KEY_MODEL,
     DEFAULT_ALT_NEUTRALIZATION_STRATEGY,
+    DEFAULT_AUDIO_DEVICE,
     DEFAULT_HOTKEY,
     DEFAULT_MODEL_SIZE,
     LOG_BACKUP_COUNT,
@@ -44,7 +46,7 @@ from audiby.constants import (
     LOG_MAX_BYTES, CONFIG_KEY_AUTOSTART,
 )
 from audiby.core import model_manager
-from audiby.core.audio_recorder import AudioRecorder
+from audiby.core.audio_recorder import AudioRecorder, describe_device
 from audiby.core.text_injector import TextInjector
 from audiby.core.transcriber import Transcriber
 from audiby.platform.hotkey_manager import get_hotkey_manager
@@ -53,6 +55,18 @@ from audiby.ui.tray import TrayController
 from audiby.platform.autostart import get_autostart
 
 logger = logging.getLogger(__name__)
+
+
+class _Unchanged:
+    """Sentinel type for optional settings that legitimately accept None."""
+
+    def __repr__(self) -> str:
+        return "UNCHANGED"
+
+
+# `None` means "follow the OS default device", so a distinct sentinel is needed
+# to express "this call did not supply a device".
+UNCHANGED = _Unchanged()
 
 
 def run_app(config: Config) -> int:
@@ -179,6 +193,7 @@ class ApplicationOrchestrator:
 
         model_name = config.get(CONFIG_KEY_MODEL, DEFAULT_MODEL_SIZE)
         self._hotkey = config.get(CONFIG_KEY_HOTKEY, DEFAULT_HOTKEY)
+        self._audio_device_id = config.get(CONFIG_KEY_AUDIO_DEVICE, DEFAULT_AUDIO_DEVICE)
         alt_neutralization_strategy = config.get(
             CONFIG_KEY_ALT_NEUTRALIZATION, DEFAULT_ALT_NEUTRALIZATION_STRATEGY
         )
@@ -195,7 +210,7 @@ class ApplicationOrchestrator:
         self._backoff_factor = 2.0
 
         # Orchestration parts instantiation
-        self._recorder = AudioRecorder(self._audio_queue)
+        self._recorder = AudioRecorder(self._audio_queue, device_id=self._audio_device_id)
         self._transcriber = Transcriber(model_path, self._audio_queue, self._text_queue)
         self._injector = TextInjector(
             self._text_queue,
@@ -446,7 +461,13 @@ class ApplicationOrchestrator:
         except Exception as e:
             logger.error("Failed to open logs folder: %s", e)
 
-    def apply_settings(self, hotkey: str, autostart: bool, model: str) -> str | None:
+    def apply_settings(
+        self,
+        hotkey: str,
+        autostart: bool,
+        model: str,
+        audio_device_id: int | None | object = UNCHANGED,
+    ) -> str | None:
         """
         Applies settings such as the hotkey, autostart preference, and model configuration. This method validates
         the provided settings and updates the internal configuration. If any errors occur during validation or
@@ -459,6 +480,10 @@ class ApplicationOrchestrator:
         :type autostart: bool
         :param model: The name of the model to be applied.
         :type model: str
+        :param audio_device_id: Capture device index, or None for the OS default.
+            Defaults to the UNCHANGED sentinel, which leaves the device alone -
+            None is a real selection here and cannot signal "not supplied".
+        :type audio_device_id: int | None | object
         :return: An error message if any validation checks fail; otherwise, None.
         :rtype: str | None
         """
@@ -478,16 +503,52 @@ class ApplicationOrchestrator:
 
         autostart_error = self.set_autostart(autostart)
         if autostart_error:
-            errors_message += autostart_error
+            errors_message += autostart_error + "\n"
         else:
             self._config.set(CONFIG_KEY_AUTOSTART, autostart)
 
-        has_successful_change = not hotkey_error or not model_error or not autostart_error
+        device_error = None
+        if audio_device_id is not UNCHANGED:
+            device_error = self.set_audio_device(audio_device_id)
+            if device_error:
+                errors_message += device_error
+            else:
+                self._config.set(CONFIG_KEY_AUDIO_DEVICE, audio_device_id)
+
+        has_successful_change = (
+            not hotkey_error or not model_error or not autostart_error or not device_error
+        )
         if has_successful_change:
             self._config.save()
 
         if errors_message:
             return errors_message
+        return None
+
+    def set_audio_device(self, audio_device_id: int | None) -> str | None:
+        """
+        Switch the capture device and reopen the audio stream so it takes effect.
+
+        :param audio_device_id: Device index, or None to follow the OS default.
+        :return: An error message if the device could not be opened, else None.
+        """
+        if audio_device_id == self._audio_device_id:
+            return None
+
+        previous = self._audio_device_id
+        try:
+            self._recorder.set_device(audio_device_id)
+        except Exception as e:
+            logger.error("Failed to switch audio device: %s - %s", type(e).__name__, e)
+            # Reopen on the previous device so recording keeps working.
+            try:
+                self._recorder.set_device(previous)
+            except Exception as restore_error:
+                logger.error("Failed to restore previous audio device: %s", restore_error)
+            return "Could not open the selected microphone. Keeping the previous one."
+
+        self._audio_device_id = audio_device_id
+        logger.info("Audio device applied: %s", describe_device(audio_device_id))
         return None
 
     def set_model(self, model: str) -> str | None:
