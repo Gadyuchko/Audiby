@@ -85,15 +85,15 @@ jobs:
           2. Open the app and allow the required OS permissions when prompted.
           3. Hold the default push-to-talk hotkey, speak, then release to insert text.
 
-          Changelog:
-          - Build and attach Windows and macOS artifacts from GitHub Actions.
-          - Package the macOS app with ad-hoc codesign and ditto-preserved zip output.
           EOF
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           body_path: release-notes.md
+          # Changelog is appended from the commits since the previous tag, so
+          # the notes never go stale and no manual edit is needed per release.
+          generate_release_notes: true
           files: |
             release-artifacts/Audiby.exe
             release-artifacts/Audiby-macos.zip
