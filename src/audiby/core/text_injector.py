@@ -2,6 +2,7 @@
 
 """
 import logging
+import sys
 import time
 from queue import Empty, Queue
 
@@ -12,10 +13,11 @@ from audiby.constants import (
     INJECTION_MODIFIER_SETTLE_DELAY,
     INJECTION_PASTE_DELAY,
     PASTE_CHORD,
+    PASTE_KEY_VK,
 )
 from audiby.exceptions import InjectionError
 from audiby.platform.clipboard import get_clipboard
-from pynput.keyboard import Controller, Key
+from pynput.keyboard import Controller, Key, KeyCode
 
 logger = logging.getLogger(__name__)
 
@@ -67,20 +69,22 @@ class TextInjector:
                 self._clipboard.restore(backup_text)
 
     def _send_paste_chord(self) -> None:
-        """Send the paste chord with the modifier held around the "v" tap.
+        """Send the paste chord with the modifier held around the paste key.
 
         The modifier is pressed explicitly rather than via `keyboard.pressed()`
         so a settle delay can sit between modifier-down and the keystroke -
-        without it the target window can process the "v" first and receive a
-        bare "v" instead of a paste. try/finally guarantees the modifier is
-        released even if the tap raises, so no modifier is left stuck down.
+        without it the target window can process the keystroke first and
+        receive a bare "v" instead of a paste. try/finally guarantees the
+        modifier is released even if the tap raises, so no modifier is left
+        stuck down. See `_paste_key` for why the keystroke is not a character.
         """
         modifier = self._paste_modifier()
+        paste_key = self._paste_key()
         self._keyboard.press(modifier)
         try:
             time.sleep(INJECTION_MODIFIER_SETTLE_DELAY)
-            self._keyboard.press("v")
-            self._keyboard.release("v")
+            self._keyboard.press(paste_key)
+            self._keyboard.release(paste_key)
         finally:
             self._keyboard.release(modifier)
 
@@ -110,6 +114,27 @@ class TextInjector:
             self._keyboard.press(Key.alt_l)
             self._keyboard.release(Key.alt_l)
             time.sleep(0.02)
+
+    @staticmethod
+    def _paste_key():
+        """Resolve the paste keystroke as a layout-independent key.
+
+        On Windows the key is addressed by virtual key code. pynput resolves a
+        *character* key through VkKeyScan against the injector thread's
+        keyboard layout; layouts with no "v" (uk-UA, ru-RU) fail that lookup,
+        and pynput falls back to KEYEVENTF_UNICODE. A Unicode packet ignores
+        the held modifier entirely, so the target window receives a bare "v"
+        instead of pasting. A virtual key code consults no layout.
+
+        The thread's layout is fixed when the thread is created, so this is not
+        something the user can work around by switching layout at runtime.
+
+        Elsewhere the character is correct - VK codes are a Windows concept,
+        and the darwin/xorg backends map "v" through their own key tables.
+        """
+        if sys.platform == "win32":
+            return KeyCode.from_vk(PASTE_KEY_VK)
+        return "v"
 
     @staticmethod
     def _paste_modifier():

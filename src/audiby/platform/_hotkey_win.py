@@ -2,7 +2,9 @@
 
 import logging
 from pynput.keyboard import Key, KeyCode
+from audiby.constants import CONTROL_CHAR_TO_VK_OFFSET
 from audiby.platform.hotkey_manager import HotkeyManagerBase
+from audiby.platform.keycodes import vk_for_token
 
 logger = logging.getLogger(__name__)
 
@@ -30,17 +32,12 @@ class WindowsHotkeyManager(HotkeyManagerBase):
                 return KeyCode.from_vk(vk)
             return key
 
-        # Letter keys may come as chars. Normalize to lowercase.
-        # Ctrl+letter can come as control chars (\x01..\x1a), so map them back to a..z.
-        if isinstance(key, KeyCode) and key.char:
-            codepoint = ord(key.char)
-            if 1 <= codepoint <= 26:
-                # 1->a, 2->b, ..., 26->z
-                return KeyCode.from_char(chr(codepoint + 96))
-            return KeyCode.from_char(key.char.lower())
-
-        # VK codes for modifiers can also show up as KeyCode values.
-        # Collapse those to generic ctrl/alt/shift as well.
+        # Prefer the virtual key code: it names the physical key, while `char`
+        # is only what the active layout prints on it. Matching by character
+        # makes a combo stop firing the moment the user switches layout - the
+        # physical "D" key reports "d" on en-US but a Cyrillic letter on uk-UA.
+        # VK codes for modifiers can also show up here, so collapse those to
+        # generic ctrl/alt/shift as well.
         if isinstance(key, KeyCode) and key.vk is not None:
             if key.vk in (162, 163):
                 return Key.ctrl
@@ -49,5 +46,18 @@ class WindowsHotkeyManager(HotkeyManagerBase):
             if key.vk in (160, 161):
                 return Key.shift
             return KeyCode.from_vk(key.vk)
+
+        # No virtual key code available - fall back to the character.
+        # Ctrl+letter arrives as a control char, which maps onto the letter's
+        # virtual key so it still matches a combo parsed from config.
+        if isinstance(key, KeyCode) and key.char:
+            codepoint = ord(key.char)
+            if 1 <= codepoint <= 26:
+                return KeyCode.from_vk(codepoint + CONTROL_CHAR_TO_VK_OFFSET)
+            vk = vk_for_token(key.char)
+            if vk is not None:
+                return KeyCode.from_vk(vk)
+            # Punctuation has no layout-independent code - keep the character.
+            return KeyCode.from_char(key.char.lower())
         return key
 

@@ -269,13 +269,37 @@ class TestHotkeyCapture:
 
         assert token == "x"
 
-    def test_backtick_is_recovered_from_windows_vk(self, settings_window):
-        """OEM punctuation keys should resolve from vk when char is not usable."""
+    def test_oem_punctuation_is_stored_by_virtual_key_code(self, settings_window):
+        """Keys with no layout-independent character are stored as a code.
+
+        VK_OEM_3 prints "`" on en-US and a Cyrillic letter on ru-RU, so the
+        character cannot identify the key. The physical code can.
+        """
         key = SimpleNamespace(char=None, name=None, vk=192)
 
-        token = settings_window._resolve_key_token(key)
+        assert settings_window._resolve_key_token(key) == "vk192"
 
-        assert token == "`"
+    def test_stored_code_is_displayed_with_english_label(self, settings_window):
+        """The user must see "ctrl+`", never "ctrl+vk192"."""
+        assert settings_window._to_display_combo("ctrl+vk192") == "ctrl+`"
+
+    def test_display_label_ignores_the_active_layout(self, settings_window, mocker):
+        """The label comes from the US layout, not whatever the user is typing in."""
+        english = mocker.patch(
+            "audiby.ui.settings_window.english_char_for_vk", return_value="`"
+        )
+
+        assert settings_window._to_display_combo("ctrl+vk192") == "ctrl+`"
+        english.assert_called_once_with(192)
+
+    def test_plain_combos_pass_through_display_unchanged(self, settings_window):
+        """Combos with no code tokens must render exactly as stored."""
+        assert settings_window._to_display_combo("ctrl+space") == "ctrl+space"
+        assert settings_window._to_display_combo("ctrl+d") == "ctrl+d"
+
+    def test_code_token_validates_through_its_english_character(self, settings_window):
+        """pynput cannot parse "vk192" - validation uses the US-English char."""
+        assert settings_window._to_pynput_format("ctrl+vk192") == "<ctrl>+`"
 
 
 class TestHotkeyValidation:

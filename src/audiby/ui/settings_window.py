@@ -1,4 +1,3 @@
-import ctypes
 import logging
 import sys
 import threading
@@ -11,6 +10,7 @@ from audiby.constants import CONFIG_KEY_HOTKEY, CONFIG_KEY_AUTOSTART, DEFAULT_AU
     CONFIG_KEY_MODEL, DEFAULT_MODEL_SIZE, CONFIG_KEY_AUDIO_DEVICE, DEFAULT_AUDIO_DEVICE
 from audiby.core import model_manager
 from audiby.core.audio_recorder import list_input_devices
+from audiby.platform.keycodes import english_char_for_vk, token_for_vk, token_from_vk, vk_from_token
 from audiby.ui.download_dialog import DownloadDialog
 from pynput.keyboard import HotKey, Key, Listener as KeyboardListener
 
@@ -45,6 +45,8 @@ class SettingsWindow:
         self._hotkey_label = None
         self._hotkey_value = None
         self._bind_hotkey = None
+        # Display form shown to the user; _hotkey_combo holds the stored form.
+        self._hotkey_combo = None
 
         self._autostart_label = None
         self._autostart_checkbox = None
@@ -113,8 +115,11 @@ class SettingsWindow:
         self._hotkey_label.grid(row=0, column=0, padx=5, pady=5)
 
         # read values from config and store in class variable
+        # The config holds the canonical combo (which may name a key by code);
+        # the field shows it with US-English labels.
+        self._hotkey_combo = self._config.get(CONFIG_KEY_HOTKEY, "ctrl+space")
         self._bind_hotkey = tk.StringVar()
-        self._bind_hotkey.set(self._config.get(CONFIG_KEY_HOTKEY, "ctrl+space"))
+        self._bind_hotkey.set(self._to_display_combo(self._hotkey_combo))
 
         self._autostart_value = tk.BooleanVar()
         self._autostart_value.set(self._config.get(CONFIG_KEY_AUTOSTART, DEFAULT_AUTOSTART))
@@ -188,6 +193,7 @@ class SettingsWindow:
         if self._window is not None:
             # Clear tkinter variables before destroying to avoid cross-thread cleanup errors
             self._bind_hotkey = None
+            self._hotkey_combo = None
             self._hotkey_value = None
             self._hotkey_label = None
             self._error_label = None
@@ -228,7 +234,7 @@ class SettingsWindow:
         """
         logger.debug("Hotkey capture mode started")
         self._capturing = True
-        self._pre_capture_value = self._bind_hotkey.get()
+        self._pre_capture_value = self._hotkey_combo
         self._pressed_modifiers = set()
         self._hotkey_value.config(state="normal")
         self._bind_hotkey.set("Press a key combination...")
@@ -305,15 +311,25 @@ class SettingsWindow:
             if name in cls._SPECIAL_KEY_TOKENS:
                 return name
 
+        # Letters and digits are identified by virtual key code, not by the
+        # character the active layout prints on them. Capturing "ctrl+d" on
+        # en-US and "ctrl+в" on uk-UA must store the same combo, or the hotkey
+        # dies as soon as the user switches layout.
+        if hasattr(key, "vk") and isinstance(key.vk, int):
+            alnum_token = token_for_vk(key.vk)
+            if alnum_token is not None:
+                return alnum_token
+
         if hasattr(key, "char") and key.char is not None:
             normalized_char = cls._normalize_char_token(key.char)
             if normalized_char is not None:
                 return normalized_char
 
+        # Punctuation has no layout-independent character, so store the
+        # physical key's code. The settings field renders it with a US-English
+        # label, so the user still sees "ctrl+`" rather than "ctrl+vk192".
         if hasattr(key, "vk") and isinstance(key.vk, int):
-            mapped = cls._map_virtual_key_to_char(key.vk)
-            if mapped is not None:
-                return mapped
+            return token_from_vk(key.vk)
 
         return str(key).lower()
 
@@ -336,21 +352,23 @@ class SettingsWindow:
             return chr(ord("a") + ord(token) - 1)
         return None
 
-    @staticmethod
-    def _map_virtual_key_to_char(vk: int) -> str | None:
-        """Resolve a printable key from a Windows virtual-key code."""
-        if sys.platform != "win32":
-            return None
-        try:
-            mapped = ctypes.windll.user32.MapVirtualKeyW(vk, 2) & 0xFFFF
-        except Exception:
-            return None
-        if not mapped:
-            return None
-        character = chr(mapped)
-        if character.isprintable() and character not in {"\t", "\r", "\n"}:
-            return character.lower()
-        return None
+    @classmethod
+    def _to_display_combo(cls, combo: str) -> str:
+        """Render a stored combo with US-English key labels.
+
+        Keys stored by code ("vk192") are shown as the character the US layout
+        prints on that physical key, so the field reads "ctrl+`" no matter
+        which layout was active when the combo was captured. Tokens that are
+        already characters or key names pass through untouched.
+        """
+        if not combo:
+            return combo
+        parts = []
+        for part in combo.split("+"):
+            token = part.strip()
+            vk = vk_from_token(token)
+            parts.append(english_char_for_vk(vk) or token if vk is not None else token)
+        return "+".join(parts)
 
     @classmethod
     def _to_pynput_format(cls, combo: str) -> str:
@@ -358,6 +376,11 @@ class SettingsWindow:
         parts = []
         for part in combo.split("+"):
             token = cls._normalize_key_token(part)
+            # pynput cannot parse a "vk<code>" token - validate it through the
+            # character the US-English layout puts on that physical key.
+            vk = vk_from_token(token)
+            if vk is not None:
+                token = english_char_for_vk(vk) or token
             if len(token) > 1 or token in cls._SPECIAL_KEY_TOKENS:
                 parts.append(f"<{token}>")
             else:
@@ -379,7 +402,8 @@ class SettingsWindow:
             logger.debug("Valid hotkey captured: %s", key_combo)
             self._error_label.grid_remove()
             self._hotkey_value.config(state="normal")
-            self._bind_hotkey.set(key_combo)
+            self._hotkey_combo = key_combo
+            self._bind_hotkey.set(self._to_display_combo(key_combo))
             self._hotkey_value.config(state="readonly")
             self._stop_capture()
         except ValueError:
@@ -387,7 +411,8 @@ class SettingsWindow:
             self._show_error("Invalid key combination. Select another combination.")
             if self._pre_capture_value is not None:
                 self._hotkey_value.config(state="normal")
-                self._bind_hotkey.set(self._pre_capture_value)
+                self._hotkey_combo = self._pre_capture_value
+                self._bind_hotkey.set(self._to_display_combo(self._pre_capture_value))
                 self._hotkey_value.config(state="readonly")
             self._stop_capture()
 
@@ -415,7 +440,8 @@ class SettingsWindow:
         self._show_error("OS-reserved modifier (Cmd/Win) cannot be used. Select another combination.")
         if self._hotkey_value is not None and self._pre_capture_value is not None:
             self._hotkey_value.config(state="normal")
-            self._bind_hotkey.set(self._pre_capture_value)
+            self._hotkey_combo = self._pre_capture_value
+            self._bind_hotkey.set(self._to_display_combo(self._pre_capture_value))
             self._hotkey_value.config(state="readonly")
         self._stop_capture()
 
@@ -464,7 +490,7 @@ class SettingsWindow:
         return self._device_ids_by_label.get(self._device_value.get(), DEFAULT_AUDIO_DEVICE)
 
     def _on_save_clicked(self) -> None:
-        new_hotkey = self._bind_hotkey.get()
+        new_hotkey = self._hotkey_combo
         autostart = self._autostart_value.get()
         model = self._model_value.get()
         device_id = self._selected_device_id()

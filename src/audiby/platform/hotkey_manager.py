@@ -7,8 +7,9 @@ import logging
 import sys
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from pynput.keyboard import HotKey, Listener
+from pynput.keyboard import HotKey, KeyCode, Listener
 from audiby.exceptions import HotkeyPermissionError
+from audiby.platform.keycodes import vk_from_token
 
 logger = logging.getLogger(__name__)
 
@@ -65,18 +66,30 @@ class HotkeyManagerBase(ABC):
 
     @staticmethod
     def _parse_hotkey(hotkey: str) -> set:
-        """Convert a hotkey string into a normalized set of pynput key objects."""
+        """Convert a hotkey string into a normalized set of pynput key objects.
+
+        A "vk<code>" token names a physical key by virtual key code and is
+        resolved directly, bypassing pynput's character parser. That form is
+        used for keys with no layout-independent character (OEM punctuation),
+        so the combo keeps matching after the user switches keyboard layout.
+        """
         normalized_parts = []
+        keys = set()
         for part in hotkey.split("+"):
             token = part.strip().lower().strip("<>")
             if not token:
                 continue
+            vk = vk_from_token(token)
+            if vk is not None:
+                keys.add(KeyCode.from_vk(vk))
+                continue
             normalized_parts.append(f"<{token}>" if len(token) > 1 else token)
-        if not normalized_parts:
-            raise ValueError("Hotkey must contain at least one key")
 
-        parsed = HotKey.parse("+".join(normalized_parts))
-        return set(parsed)
+        if not normalized_parts and not keys:
+            raise ValueError("Hotkey must contain at least one key")
+        if normalized_parts:
+            keys.update(HotKey.parse("+".join(normalized_parts)))
+        return keys
 
     @abstractmethod
     def _normalize_key(self, key): ...  # platform-specific

@@ -129,3 +129,83 @@ def test_mac_start_wraps_listener_failure(mocker, callbacks):
 def test_hotkey_permission_error_remains_hotkey_error() -> None:
     """Settings fallback code can keep catching HotkeyError."""
     assert issubclass(HotkeyPermissionError, HotkeyError)
+
+
+# ---------------------------------------------------------------------------
+# Hotkey identity must survive a keyboard layout switch
+# ---------------------------------------------------------------------------
+
+class TestHotkeyIsLayoutIndependent:
+    """A combo must match the physical key, not the character a layout prints.
+
+    Regression guard: pynput resolves an incoming key's `char` through the
+    active Windows layout. The physical "D" key reports "d" on en-US and "в" on
+    uk-UA/ru-RU, so a combo stored and matched by character silently stops
+    firing the moment the user switches layout. Virtual key codes are the
+    layout-independent identity - VK_A..VK_Z are 0x41..0x5A regardless of
+    layout, so they are derivable by arithmetic with no VkKeyScan lookup.
+    """
+
+    # What pynput reports for the physical "D" key on each layout.
+    VK_D = 0x44
+    LATIN_D = "d"
+    CYRILLIC_D = "в"
+
+    def test_parsed_combo_uses_virtual_key_not_character(self):
+        """"ctrl+d" must parse to a VK-addressed key so no layout is consulted."""
+        manager = WindowsHotkeyManager("ctrl+d", lambda: None, lambda: None)
+
+        letter_keys = [k for k in manager._hotkey_set if getattr(k, "vk", None) == self.VK_D]
+        assert letter_keys, (
+            f"no VK_D key in parsed combo {manager._hotkey_set} - "
+            "the letter is still stored by character"
+        )
+        assert getattr(letter_keys[0], "char", None) is None
+
+    def test_same_physical_key_normalizes_alike_across_layouts(self):
+        """The physical "D" key must normalize identically on en-US and uk-UA."""
+        from pynput.keyboard import KeyCode
+
+        manager = WindowsHotkeyManager("ctrl+d", lambda: None, lambda: None)
+
+        as_latin = manager._normalize_key(KeyCode(vk=self.VK_D, char=self.LATIN_D))
+        as_cyrillic = manager._normalize_key(KeyCode(vk=self.VK_D, char=self.CYRILLIC_D))
+
+        assert as_latin == as_cyrillic
+
+    def test_combo_fires_when_layout_reports_cyrillic_char(self, callbacks):
+        """A combo captured on en-US must still fire while typing on uk-UA."""
+        from pynput.keyboard import Key, KeyCode
+
+        on_press, on_release = callbacks
+        manager = WindowsHotkeyManager("ctrl+d", on_press, on_release)
+
+        # Same physical key, but the Cyrillic layout labels it "в".
+        cyrillic_d = KeyCode(vk=self.VK_D, char=self.CYRILLIC_D)
+        manager._on_key_press(Key.ctrl_l)
+        manager._on_key_press(cyrillic_d)
+        manager._on_key_release(cyrillic_d)
+
+        on_press.assert_called_once()
+        on_release.assert_called_once()
+
+    def test_special_keys_still_match(self, callbacks):
+        """Named keys are already VK-based - the change must not regress them."""
+        from pynput.keyboard import Key
+
+        on_press, on_release = callbacks
+        manager = WindowsHotkeyManager("ctrl+space", on_press, on_release)
+
+        manager._on_key_press(Key.ctrl_l)
+        manager._on_key_press(Key.space)
+        manager._on_key_release(Key.space)
+
+        on_press.assert_called_once()
+        on_release.assert_called_once()
+
+    def test_digit_combo_uses_virtual_key(self):
+        """Digits share the arithmetic VK mapping (VK_0..VK_9 = 0x30..0x39)."""
+        manager = WindowsHotkeyManager("ctrl+5", lambda: None, lambda: None)
+
+        digit_keys = [k for k in manager._hotkey_set if getattr(k, "vk", None) == 0x35]
+        assert digit_keys, f"no VK_5 key in parsed combo {manager._hotkey_set}"

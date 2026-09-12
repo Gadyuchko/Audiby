@@ -98,3 +98,37 @@ INJECTION_PASTE_DELAY = 0.1
 # target window can occasionally process the "v" before the modifier down
 # event, injecting a bare "v" instead of pasting.
 INJECTION_MODIFIER_SETTLE_DELAY = 0.02
+
+# Windows virtual key codes.
+#
+# Letters and digits occupy fixed ranges on every keyboard layout, so a key can
+# be identified by arithmetic without ever consulting the active layout.
+# Resolving a key through its character instead goes through VkKeyScan (send
+# side) or MapVirtualKey (capture side), both of which depend on the caller's
+# layout - the source of pastes that arrive as a bare "v" and hotkeys that stop
+# matching after a layout switch.
+VK_0 = 0x30
+VK_9 = 0x39
+VK_A = 0x41
+VK_Z = 0x5A
+
+# The paste keystroke, addressed by virtual key code rather than the character
+# "v" so it survives layouts that have no "v" key (uk-UA, ru-RU).
+PASTE_KEY_VK = 0x56  # VK_V
+
+# Ctrl+letter arrives from the OS as a control character (1..26). Adding this
+# offset maps it onto the letter's virtual key code (1 -> VK_A at 0x41).
+CONTROL_CHAR_TO_VK_OFFSET = 0x40
+
+# Config token prefix for a key stored by virtual key code, e.g. "vk192".
+# Used for keys with no layout-independent character (OEM punctuation), so the
+# stored combo names the physical key rather than whatever the layout printed.
+VK_TOKEN_PREFIX = "vk"
+
+# US-English layout, used only to render a stable label for a stored VK code.
+# The user sees "ctrl+`" whatever layout is active, and the config keeps the
+# code. Loaded with KLF_NOTELLSHELL so querying it never switches the user's
+# own layout.
+EN_US_LAYOUT_ID = "00000409"
+KLF_NOTELLSHELL = 0x80
+MAPVK_VK_TO_CHAR = 2

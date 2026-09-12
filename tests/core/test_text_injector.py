@@ -2,10 +2,12 @@
 
 Tests validate queue-driven injection flow, clipboard backup/restore
 guarantee, InjectionError handling, privacy guardrails, and sequential
-injection independence. Clipboard and pynput are fully mocked.
+injection independence, and layout-independent paste-key addressing.
+Clipboard and pynput are fully mocked.
 """
 import logging
 import queue
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -19,6 +21,24 @@ from audiby.exceptions import InjectionError
 # ---------------------------------------------------------------------------
 
 _P = "audiby.core.text_injector"
+
+# VK_V - the Windows virtual key code for the physical "v" key.
+_VK_V = 0x56
+
+
+def _expected_paste_key():
+    """The key object the injector must tap, per platform.
+
+    Windows: VK_V addressed by virtual key code, so the tap never goes through
+    a layout lookup. Elsewhere the character stays correct - VK codes are a
+    Windows concept, and the darwin/xorg backends map "v" through their own key
+    tables.
+    """
+    from pynput.keyboard import KeyCode
+
+    if sys.platform != "win32":
+        return "v"
+    return KeyCode.from_vk(_VK_V)
 
 
 def _chord_sequence(mock_ctrl) -> list[tuple[str, object]]:
@@ -39,10 +59,10 @@ def _chord_sequence(mock_ctrl) -> list[tuple[str, object]]:
 
 
 def _raise_on_v(error: Exception):
-    """Controller.press side effect that fails only on the "v" tap."""
+    """Controller.press side effect that fails only on the paste-key tap."""
 
     def _press(key):
-        if key == "v":
+        if key == _expected_paste_key():
             raise error
 
     return _press
@@ -136,8 +156,8 @@ class TestTextInjectorHappyPath:
         from pynput.keyboard import Key
         assert _chord_sequence(mock_ctrl) == [
             ("press", Key.ctrl_l),
-            ("press", "v"),
-            ("release", "v"),
+            ("press", _expected_paste_key()),
+            ("release", _expected_paste_key()),
             ("release", Key.ctrl_l),
         ]
 
@@ -156,7 +176,7 @@ class TestTextInjectorHappyPath:
 
         # The modifier is pressed explicitly now, so the "v" tap marks the paste.
         def _record_paste(key):
-            if key == "v":
+            if key == _expected_paste_key():
                 call_order.append("paste")
 
         mock_ctrl.press.side_effect = _record_paste
@@ -555,7 +575,7 @@ class TestPasteChordTiming:
 
         from pynput.keyboard import Key
         modifier_index = events.index(("press", Key.ctrl_l))
-        v_index = events.index(("press", "v"))
+        v_index = events.index(("press", _expected_paste_key()))
         slept_between = [
             event for event in events[modifier_index + 1:v_index] if event[0] == "sleep"
         ]
@@ -581,3 +601,76 @@ class TestPasteChordTiming:
 
         from pynput.keyboard import Key
         assert ("release", Key.ctrl_l) in _chord_sequence(mock_ctrl)
+
+
+# ---------------------------------------------------------------------------
+# Paste key must not depend on the active keyboard layout
+# ---------------------------------------------------------------------------
+
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="VK codes and the VkKeyScan fallback are Windows-only",
+)
+class TestPasteKeyIsLayoutIndependent:
+    """The paste keystroke must be addressed by virtual key code, not character.
+
+    Regression guard: pynput resolves a character key through VkKeyScan against
+    the calling thread's Windows layout. Cyrillic layouts (uk-UA, ru-RU) have no
+    "v" key, so VkKeyScan returns -1 and pynput falls back to KEYEVENTF_UNICODE.
+    A Unicode key event ignores the held Ctrl entirely, so the target window
+    received a literal "v" instead of pasting the transcription.
+    """
+
+    def test_paste_key_carries_virtual_key_code(self, make_injector):
+        """The tapped key must expose VK_V so SendInput emits a real VK event."""
+        tq = queue.Queue()
+        tq.put("layout safe")
+        mock_cb = MagicMock()
+        mock_cb.backup.return_value = "old"
+
+        injector, _, mock_ctrl, _ = make_injector(text_queue=tq, clipboard_mod=mock_cb)
+        injector.inject()
+
+        presses = [key for name, key in _chord_sequence(mock_ctrl) if name == "press"]
+        assert len(presses) == 2, f"expected modifier + paste key, got {presses}"
+        paste_key = presses[1]
+
+        assert getattr(paste_key, "vk", None) == _VK_V
+        assert getattr(paste_key, "char", None) is None, (
+            "paste key still carries a character - pynput will run a layout "
+            "lookup and fall back to Unicode injection on Cyrillic layouts"
+        )
+
+    def test_paste_key_is_not_a_bare_character(self, make_injector):
+        """A raw "v" string must never reach the controller."""
+        tq = queue.Queue()
+        tq.put("no bare v")
+        mock_cb = MagicMock()
+        mock_cb.backup.return_value = "old"
+
+        injector, _, mock_ctrl, _ = make_injector(text_queue=tq, clipboard_mod=mock_cb)
+        injector.inject()
+
+        assert "v" not in [key for _, key in _chord_sequence(mock_ctrl)]
+
+    def test_paste_key_emits_vk_event_not_unicode_event(self, make_injector):
+        """The key must translate to a wVk SendInput event with no UNICODE flag.
+
+        This asserts the real payload pynput hands to SendInput, which is what
+        actually decides whether Ctrl applies to the keystroke.
+        """
+        from pynput._util.win32 import KEYBDINPUT
+
+        tq = queue.Queue()
+        tq.put("vk event")
+        mock_cb = MagicMock()
+        mock_cb.backup.return_value = "old"
+
+        injector, _, mock_ctrl, _ = make_injector(text_queue=tq, clipboard_mod=mock_cb)
+        injector.inject()
+
+        paste_key = [key for name, key in _chord_sequence(mock_ctrl) if name == "press"][1]
+        params = paste_key._parameters(is_press=True)
+
+        assert params["wVk"] == _VK_V
+        assert not params["dwFlags"] & KEYBDINPUT.UNICODE
