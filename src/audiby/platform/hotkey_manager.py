@@ -45,22 +45,27 @@ class HotkeyManagerBase(ABC):
             self._listener.stop()
             self._listener = None
 
-    def _on_key_press(self, key) -> None:
+    # pynput passes a second ``injected`` argument when the callback accepts
+    # two parameters: True for events posted by software (including our own
+    # paste chord) rather than by the keyboard. Logged so a combo that breaks
+    # early can be traced to its source.
+
+    def _on_key_press(self, key, injected: bool = False) -> None:
         """Track combo state and fire on_press when full combo is held."""
         key = self._normalize_key(key)
         if key in self._hotkey_set:
             self._pressed.add(key)
         if self._hotkey_set == self._pressed and not self._combo_active:
             self._combo_active = True
-            logger.debug("Combo activated - firing press callback")
+            logger.debug("Combo activated by %r (injected=%s) - firing press callback", key, injected)
             self._on_press()
 
-    def _on_key_release(self, key) -> None:
+    def _on_key_release(self, key, injected: bool = False) -> None:
         """Track combo release and fire on_release when combo breaks."""
         key = self._normalize_key(key)
         if self._combo_active and key in self._hotkey_set:
             self._combo_active = False
-            logger.debug("Combo deactivated - firing release callback")
+            logger.debug("Combo deactivated by %r (injected=%s) - firing release callback", key, injected)
             self._on_release()
         self._pressed.discard(key)
 
