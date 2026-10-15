@@ -26,8 +26,11 @@ Release artifacts are built by `.github/workflows/build.yml`. Pushes and pull re
 1. Download `Audiby-macos.zip` from the latest GitHub Release.
 2. Unzip it and open `Audiby.app`.
 3. If macOS blocks the app, right-click `Audiby.app` and choose **Open**.
-4. Allow Microphone and Input Monitoring permissions if prompted.
-5. Hold `ctrl+space`, speak, then release. The transcribed text appears at your cursor.
+4. On first launch a permissions window lists what Audiby needs: **Microphone**, **Input Monitoring**, and **Accessibility**. Click **Allow** on each row to get the macOS prompt, turn on the switch, and watch the row flip to *Granted*. **Open Settings** jumps straight to the right pane if the prompt did not appear.
+5. After turning on Input Monitoring and Accessibility, click **Relaunch**. macOS applies those two only to a freshly started app, so the rows may stay red until the new instance comes up.
+6. Hold `ctrl+space`, speak, then release. The transcribed text appears at your cursor.
+
+macOS cannot grant these permissions on an app's behalf, so the switch is always yours to flip. The window reappears on later launches only while something is still missing.
 
 Audiby v1.0 artifacts are unsigned. Windows may show SmartScreen, and macOS may show the standard unidentified-developer prompt.
 
@@ -116,6 +119,8 @@ uv sync
 uv run python -m audiby
 ```
 
+On macOS, permissions are tied to the app that launched Python, so the permissions window will ask you to allow your terminal or IDE (Terminal, iTerm, VS Code, PyCharm) rather than Audiby. Fully restart that host app after granting Input Monitoring or Accessibility.
+
 Download or switch a Whisper model manually:
 
 ```bash
@@ -131,6 +136,22 @@ uv run python scripts/build.py
 ```
 
 On Windows this produces `dist/Audiby.exe`. On macOS this produces `dist/Audiby.app`, ad-hoc signs it, and packages `dist/Audiby-macos.zip`.
+
+An ad-hoc signature identifies the app by its code hash, so macOS forgets the Accessibility and Input Monitoring grants after every rebuild, and System Settings keeps showing a stale "Audiby" switch that no longer applies. To keep grants across local builds, sign with a stable certificate instead:
+
+1. Open Keychain Access, then Keychain Access menu > Certificate Assistant > Create a Certificate. Name it `Audiby Dev`, identity type Self Signed Root, certificate type Code Signing.
+2. Build with that identity:
+
+```bash
+AUDIBY_CODESIGN_IDENTITY="Audiby Dev" uv run python scripts/build.py
+```
+
+If a rebuild ever leaves a stale switch behind, clear it and grant again:
+
+```bash
+tccutil reset Accessibility com.audiby.app
+tccutil reset ListenEvent com.audiby.app
+```
 
 ### Development Mode
 
