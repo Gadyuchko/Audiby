@@ -184,9 +184,11 @@ class TestSettingsWindowReuse:
 
         settings_window.show()
 
+        # macOS lifts the window directly on the AppKit thread; other
+        # platforms schedule the lift onto the tkinter thread via after().
         mock_window = mock_tk["Tk"].return_value
-        after_calls = [c for c in mock_window.method_calls if c[0] == "after"]
-        assert len(after_calls) > 0, "Window was not refocused on second show()"
+        refocus_calls = [c for c in mock_window.method_calls if c[0] in ("after", "lift")]
+        assert len(refocus_calls) > 0, "Window was not refocused on second show()"
 
 
 # ---------------------------------------------------------------------------
@@ -279,8 +281,14 @@ class TestHotkeyCapture:
 
         assert settings_window._resolve_key_token(key) == "vk192"
 
-    def test_stored_code_is_displayed_with_english_label(self, settings_window):
-        """The user must see "ctrl+`", never "ctrl+vk192"."""
+    def test_stored_code_is_displayed_with_english_label(self, settings_window, mocker):
+        """The user must see "ctrl+`", never "ctrl+vk192".
+
+        The US-English lookup needs the Win32 layout API, so it is mocked to
+        keep the test platform-independent.
+        """
+        mocker.patch("audiby.ui.settings_window.english_char_for_vk", return_value="`")
+
         assert settings_window._to_display_combo("ctrl+vk192") == "ctrl+`"
 
     def test_display_label_ignores_the_active_layout(self, settings_window, mocker):
@@ -297,8 +305,10 @@ class TestHotkeyCapture:
         assert settings_window._to_display_combo("ctrl+space") == "ctrl+space"
         assert settings_window._to_display_combo("ctrl+d") == "ctrl+d"
 
-    def test_code_token_validates_through_its_english_character(self, settings_window):
+    def test_code_token_validates_through_its_english_character(self, settings_window, mocker):
         """pynput cannot parse "vk192" - validation uses the US-English char."""
+        mocker.patch("audiby.ui.settings_window.english_char_for_vk", return_value="`")
+
         assert settings_window._to_pynput_format("ctrl+vk192") == "<ctrl>+`"
 
 

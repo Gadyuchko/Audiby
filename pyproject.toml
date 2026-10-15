@@ -31,4 +31,5 @@ markers = [
 dev = [
     "pyinstaller>=6.19.0",
     "pytest>=9.0.2",
+    "pytest-mock>=3.16.0",
 ]

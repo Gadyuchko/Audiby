@@ -3,9 +3,14 @@
 No real registry access — all winreg operations are mocked.
 """
 
+import sys
 from unittest.mock import MagicMock, patch, call
 
 import pytest
+
+# _autostart_win imports winreg at module level, which only exists on Windows.
+if sys.platform != "win32":
+    pytest.skip("Windows autostart backend needs winreg", allow_module_level=True)
 
 
 @pytest.fixture
