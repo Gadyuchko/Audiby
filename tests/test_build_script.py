@@ -103,6 +103,7 @@ def test_run_codesigns_and_zips_macos_app(monkeypatch, tmp_path):
     monkeypatch.setattr(build, "ensure_packaging_icons", lambda root: None)
     monkeypatch.setattr(build, "prepare_bundled_base_model", fake_prepare_model)
     monkeypatch.setattr(build.subprocess, "run", fake_run)
+    monkeypatch.delenv("AUDIBY_CODESIGN_IDENTITY", raising=False)
     (tmp_path / "Audiby.spec").touch()
 
     assert build.run("darwin") == 0
@@ -123,6 +124,36 @@ def test_run_codesigns_and_zips_macos_app(monkeypatch, tmp_path):
         str(tmp_path / "dist" / "Audiby.app"),
         str(tmp_path / "dist" / "Audiby-macos.zip"),
     ] in calls
+
+
+def test_codesign_identity_defaults_to_adhoc_and_honors_env(monkeypatch):
+    monkeypatch.delenv("AUDIBY_CODESIGN_IDENTITY", raising=False)
+    assert build.codesign_identity() == "-"
+
+    monkeypatch.setenv("AUDIBY_CODESIGN_IDENTITY", "   ")
+    assert build.codesign_identity() == "-"
+
+    monkeypatch.setenv("AUDIBY_CODESIGN_IDENTITY", "Audiby Dev")
+    assert build.codesign_identity() == "Audiby Dev"
+
+
+def test_postprocess_signs_with_configured_identity(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_run(command, cwd, check):
+        calls.append(command)
+        if command[0] == "ditto":
+            (cwd / "dist" / "Audiby-macos.zip").touch()
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(build.subprocess, "run", fake_run)
+    monkeypatch.setenv("AUDIBY_CODESIGN_IDENTITY", "Audiby Dev")
+    app_path = tmp_path / "dist" / "Audiby.app"
+    app_path.mkdir(parents=True)
+
+    build.postprocess_macos_app(app_path, project_root=tmp_path)
+
+    assert calls[0][:5] == ["codesign", "--force", "--deep", "--sign", "Audiby Dev"]
 
 
 def test_windows_build_command_collects_faster_whisper_data(tmp_path):

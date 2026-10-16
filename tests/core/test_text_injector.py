@@ -41,6 +41,22 @@ def _expected_paste_key():
     return KeyCode.from_vk(_VK_V)
 
 
+def _expected_paste_modifier():
+    """The modifier the injector must hold, per platform.
+
+    The paste chord is cmd+v on macOS and ctrl+v elsewhere (see
+    audiby.constants.PASTE_CHORD), so the expected modifier follows the
+    platform the tests run on.
+    """
+    from pynput.keyboard import Key
+
+    from audiby.constants import PASTE_CHORD
+
+    if PASTE_CHORD.lower().startswith("cmd+"):
+        return Key.cmd
+    return Key.ctrl_l
+
+
 def _chord_sequence(mock_ctrl) -> list[tuple[str, object]]:
     """Ordered (method, key) pairs for the paste chord.
 
@@ -155,10 +171,10 @@ class TestTextInjectorHappyPath:
         # Modifier must be held down across the "v" tap and released after it.
         from pynput.keyboard import Key
         assert _chord_sequence(mock_ctrl) == [
-            ("press", Key.ctrl_l),
+            ("press", _expected_paste_modifier()),
             ("press", _expected_paste_key()),
             ("release", _expected_paste_key()),
-            ("release", Key.ctrl_l),
+            ("release", _expected_paste_modifier()),
         ]
 
     def test_inject_order_backup_set_paste_restore(self, make_injector):
@@ -574,7 +590,7 @@ class TestPasteChordTiming:
             injector.inject()
 
         from pynput.keyboard import Key
-        modifier_index = events.index(("press", Key.ctrl_l))
+        modifier_index = events.index(("press", _expected_paste_modifier()))
         v_index = events.index(("press", _expected_paste_key()))
         slept_between = [
             event for event in events[modifier_index + 1:v_index] if event[0] == "sleep"
@@ -600,7 +616,7 @@ class TestPasteChordTiming:
             injector.inject()
 
         from pynput.keyboard import Key
-        assert ("release", Key.ctrl_l) in _chord_sequence(mock_ctrl)
+        assert ("release", _expected_paste_modifier()) in _chord_sequence(mock_ctrl)
 
 
 # ---------------------------------------------------------------------------

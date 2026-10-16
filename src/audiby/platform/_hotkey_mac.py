@@ -22,6 +22,19 @@ class MacHotkeyManager(HotkeyManagerBase):
             return Key.alt
         if key in (Key.shift, Key.shift_l, Key.shift_r):
             return Key.shift
+        if key in (Key.cmd, Key.cmd_l, Key.cmd_r):
+            return Key.cmd
+
+        # Non-modifier special keys (space, enter, tab, F-keys...) arrive from
+        # the listener as Key enum members whose value carries both a vk and a
+        # char (Key.space.value is KeyCode(vk=49, char=" ")), while
+        # HotKey.parse yields a bare KeyCode(vk=49). KeyCode hashes on its full
+        # repr, so the two never meet in a set. Reduce both to the bare vk.
+        if isinstance(key, Key):
+            vk = getattr(key.value, "vk", None)
+            if vk is not None:
+                return KeyCode.from_vk(vk)
+            return key
 
         # Letter keys may come as chars. Normalize to lowercase.
         # Ctrl+letter can come as control chars (\x01..\x1a), so map them back to a..z.

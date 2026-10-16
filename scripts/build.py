@@ -114,11 +114,23 @@ def pyinstaller_command(config: BuildConfig, project_root: Path = PROJECT_ROOT) 
     ]
 
 
+def codesign_identity() -> str:
+    """Return the codesign identity for the macOS bundle.
+
+    Defaults to ad-hoc ("-"). An ad-hoc signature's designated requirement is
+    the binary's own code hash, so macOS forgets the Accessibility and Input
+    Monitoring grants on every rebuild. Set ``AUDIBY_CODESIGN_IDENTITY`` to the
+    name of a stable signing certificate (a self-signed one from Keychain
+    Access is enough for local development) to keep the grants across builds.
+    """
+    return os.environ.get("AUDIBY_CODESIGN_IDENTITY", "").strip() or "-"
+
+
 def postprocess_macos_app(app_path: Path, project_root: Path = PROJECT_ROOT) -> Path:
-    """Ad-hoc sign and zip the macOS app bundle for release distribution."""
+    """Sign and zip the macOS app bundle for release distribution."""
     zip_path = project_root / "dist" / "Audiby-macos.zip"
     subprocess.run(
-        ["codesign", "--force", "--deep", "--sign", "-", str(app_path)],
+        ["codesign", "--force", "--deep", "--sign", codesign_identity(), str(app_path)],
         cwd=project_root,
         check=True,
     )

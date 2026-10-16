@@ -1,14 +1,22 @@
 """Tests for clipboard factory dispatch and Windows backend behavior."""
 
 import subprocess
+import sys
 from unittest.mock import patch
 
 import pytest
 
 from audiby.exceptions import InjectionError
 from audiby.platform._clipboard_mac import MacClipboard
-from audiby.platform._clipboard_win import WindowsClipboard
 from audiby.platform.clipboard import get_clipboard
+
+# The Windows backend binds user32/kernel32 through ctypes.WinDLL at import
+# time, so it can only be imported (and tested) on Windows.
+_IS_WINDOWS = sys.platform == "win32"
+_windows_only = pytest.mark.skipif(not _IS_WINDOWS, reason="Windows clipboard backend needs Win32")
+
+if _IS_WINDOWS:
+    from audiby.platform._clipboard_win import WindowsClipboard
 
 
 @pytest.fixture
@@ -57,6 +65,7 @@ def win32():
         yield _Win32()
 
 
+@_windows_only
 def test_factory_returns_windows_backend_on_win32(monkeypatch):
     monkeypatch.setattr("sys.platform", "win32")
 
@@ -80,6 +89,7 @@ def test_factory_raises_on_unsupported_platform(monkeypatch):
         get_clipboard()
 
 
+@_windows_only
 def test_windows_get_text_reads_clipboard(win32):
     cb = WindowsClipboard()
     win32.GetClipboardData.return_value = 1
@@ -90,6 +100,7 @@ def test_windows_get_text_reads_clipboard(win32):
     win32.CloseClipboard.assert_called_once()
 
 
+@_windows_only
 def test_windows_set_text_writes_clipboard(win32):
     cb = WindowsClipboard()
 
@@ -99,6 +110,7 @@ def test_windows_set_text_writes_clipboard(win32):
     win32.SetClipboardData.assert_called_once()
 
 
+@_windows_only
 def test_windows_backup_restore_round_trip(win32):
     cb = WindowsClipboard()
     win32.GetClipboardData.return_value = 1
@@ -112,6 +124,7 @@ def test_windows_backup_restore_round_trip(win32):
     assert win32.SetClipboardData.call_count == 2
 
 
+@_windows_only
 def test_windows_set_text_failure_raises_injection_error(win32):
     cb = WindowsClipboard()
     win32.SetClipboardData.return_value = 0

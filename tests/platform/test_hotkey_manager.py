@@ -114,6 +114,37 @@ def test_mac_combo_press_release_invokes_callbacks(callbacks):
     on_release.assert_called_once()
 
 
+@pytest.mark.parametrize(
+    "combo, listener_keys",
+    [
+        ("ctrl+space", ["ctrl", "space"]),
+        ("ctrl+enter", ["ctrl_l", "enter"]),
+        ("cmd+f5", ["cmd_r", "f5"]),
+        ("alt+tab", ["alt", "tab"]),
+    ],
+)
+def test_mac_special_key_combo_matches_listener_enum_members(callbacks, combo, listener_keys):
+    """The default ctrl+space combo must fire on macOS.
+
+    HotKey.parse stores the space bar as a bare KeyCode(vk=49), but the macOS
+    listener reports it as Key.space, whose value also carries char=" ".
+    KeyCode hashes on its repr, so without normalization the two never match
+    and the push-to-talk key silently does nothing.
+    """
+    from pynput.keyboard import Key
+
+    on_press, on_release = callbacks
+    manager = MacHotkeyManager(combo, on_press, on_release)
+    keys = [getattr(Key, name) for name in listener_keys]
+
+    for key in keys:
+        manager._on_key_press(key)
+    on_press.assert_called_once()
+
+    manager._on_key_release(keys[-1])
+    on_release.assert_called_once()
+
+
 def test_mac_start_wraps_listener_failure(mocker, callbacks):
     listener_cls = mocker.patch("audiby.platform.hotkey_manager.Listener")
     original = RuntimeError("boom")

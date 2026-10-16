@@ -1,5 +1,6 @@
 """Audiby entry point - local voice-to-text with push-to-talk."""
 
+import multiprocessing
 import sys
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
@@ -30,8 +31,33 @@ def _parse_setup_model(args: list[str]) -> str | None:
     return None
 
 
+def _run_multiprocessing_child_if_requested() -> None:
+    """Serve as a multiprocessing helper when launched as one, then exit.
+
+    Inside the PyInstaller bundle ``sys.executable`` is Audiby itself. When a
+    library starts a multiprocessing helper (the resource tracker on the first
+    transcription, for example) it launches ``<exe> -c "<bootstrap code>"``
+    expecting a bare interpreter. Without this check the bootloader runs the
+    app instead, and a second Audiby with its own hotkey listener appears.
+    """
+    multiprocessing.freeze_support()
+    args = sys.argv[1:]
+    if "-c" not in args:
+        return
+    code_index = args.index("-c") + 1
+    if code_index >= len(args):
+        return
+    code = args[code_index]
+    if not code.lstrip().startswith("from multiprocessing"):
+        return
+    sys.argv = [sys.argv[0], *args[code_index + 1:]]
+    exec(code, {"__name__": "__main__"})
+    sys.exit(0)
+
+
 def main() -> int:
     """Application entry point."""
+    _run_multiprocessing_child_if_requested()
     setup_model = _parse_setup_model(sys.argv[1:])
 
     if setup_model is not None:

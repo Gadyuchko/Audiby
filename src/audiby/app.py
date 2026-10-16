@@ -50,7 +50,13 @@ from audiby.core.audio_recorder import AudioRecorder, describe_device
 from audiby.core.text_injector import TextInjector
 from audiby.core.transcriber import Transcriber
 from audiby.platform.hotkey_manager import get_hotkey_manager
-from audiby.platform.macos_permissions import ensure_mac_input_permissions
+from audiby.platform._pynput_mac import install_main_thread_keycode_context
+from audiby.platform.single_instance import SingleInstanceLock
+from audiby.platform.macos_permissions import (
+    ensure_mac_input_permissions,
+    get_missing_mac_permissions,
+)
+from audiby.ui.permissions_wizard import PermissionsWizard
 from audiby.ui.tray import TrayController
 from audiby.platform.autostart import get_autostart
 
@@ -83,12 +89,32 @@ def run_app(config: Config) -> int:
         LOG_BACKUP_COUNT,
     )
 
+    instance_lock = SingleInstanceLock(config.config_dir)
+    if not instance_lock.acquire():
+        logger.warning("Audiby is already running; this instance exits")
+        return 0
+    try:
+        return _run_app_locked(config)
+    finally:
+        instance_lock.release()
+
+
+def _run_app_locked(config: Config) -> int:
+    """Run startup and the orchestrator while the single-instance lock is held."""
+    # Must run on the main thread before any Tk window exists and before the
+    # hotkey listener thread starts; see audiby.platform._pynput_mac.
+    install_main_thread_keycode_context()
+
     model_name = config.get(CONFIG_KEY_MODEL, DEFAULT_MODEL_SIZE)
     if not model_manager.exists(model_name):
         logger.warning("Model '%s' not found locally; prompting for download", model_name)
         if not _ensure_startup_model_available(model_name):
             logger.error("Startup aborted because model '%s' is still unavailable", model_name)
             return 1
+
+    if not _ensure_startup_permissions():
+        logger.info("Startup cancelled from the permissions wizard")
+        return 0
 
     app = ApplicationOrchestrator(config)
     try:
@@ -116,6 +142,30 @@ def _ensure_startup_model_available(model_name: str) -> bool:
     """Prompt for a missing startup model download before orchestrator boot."""
     result = DownloadDialog(model_name).run()
     return result.status == "success"
+
+
+def _ensure_startup_permissions() -> bool:
+    """Walk the user through missing macOS permissions before orchestrator boot.
+
+    Returns False only when the user chose to quit from the wizard. Continuing
+    with permissions still missing is allowed; the runtime error paths for the
+    microphone and hotkey remain authoritative.
+    """
+    if sys.platform != "darwin":
+        return True
+    missing = get_missing_mac_permissions()
+    if not missing:
+        return True
+    logger.warning("macOS permissions missing at startup: %s; showing wizard", ", ".join(missing))
+    result = PermissionsWizard(missing).run()
+    if result.status == "quit":
+        return False
+    if result.status == "relaunch":
+        logger.info("Exiting so the relaunched instance picks up new macOS permissions")
+        return False
+    if result.missing:
+        logger.warning("Continuing with macOS permissions still missing: %s", ", ".join(result.missing))
+    return True
 
 
 def setup_logging(config: Config) -> Path:

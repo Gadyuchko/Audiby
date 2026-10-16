@@ -32,6 +32,18 @@ from audiby.exceptions import (
 # Fixtures
 # ---------------------------------------------------------------------------
 
+@pytest.fixture(autouse=True)
+def _no_permissions_wizard(mocker):
+    """Keep run_app from opening the real macOS permissions wizard.
+
+    On a developer Mac without the permissions granted, run_app would otherwise
+    block on a real tkinter window. Tests that exercise the wizard flow
+    re-patch these names explicitly.
+    """
+    mocker.patch("audiby.app.get_missing_mac_permissions", return_value=[])
+    mocker.patch("audiby.app.PermissionsWizard")
+
+
 @pytest.fixture
 def mock_config(tmp_path):
     """Minimal Config mock with config_dir pointing to tmp_path."""
@@ -918,6 +930,125 @@ class TestRunAppPermissionFailures:
         assert result == 1
         dialog.assert_called_once()
         tray_cls.assert_not_called()
+
+
+class TestRunAppPermissionsWizard:
+    """Tests for the macOS permissions wizard gate before orchestrator boot."""
+
+    @staticmethod
+    def _config(tmp_path):
+        config = MagicMock()
+        config.config_dir = tmp_path
+        config.get.side_effect = lambda key, default=None: {
+            "model_size": "base",
+        }.get(key, default)
+        return config
+
+    @pytest.fixture
+    def startup(self, mocker, tmp_path):
+        mocker.patch("audiby.app.setup_logging", return_value=tmp_path / "audiby.log")
+        mocker.patch("audiby.app.model_manager.exists", return_value=True)
+        app_cls = mocker.patch("audiby.app.ApplicationOrchestrator")
+        wizard_cls = mocker.patch("audiby.app.PermissionsWizard")
+        return app_cls, wizard_cls
+
+    def test_wizard_skipped_off_mac(self, mocker, tmp_path, startup):
+        app_cls, wizard_cls = startup
+        mocker.patch("audiby.app.sys.platform", "win32")
+        missing = mocker.patch(
+            "audiby.app.get_missing_mac_permissions", return_value=["accessibility"]
+        )
+
+        assert run_app(self._config(tmp_path)) == 0
+
+        missing.assert_not_called()
+        wizard_cls.assert_not_called()
+        app_cls.return_value.start.assert_called_once()
+
+    def test_wizard_skipped_when_all_granted(self, mocker, tmp_path, startup):
+        app_cls, wizard_cls = startup
+        mocker.patch("audiby.app.sys.platform", "darwin")
+        mocker.patch("audiby.app.get_missing_mac_permissions", return_value=[])
+
+        assert run_app(self._config(tmp_path)) == 0
+
+        wizard_cls.assert_not_called()
+        app_cls.return_value.start.assert_called_once()
+
+    def test_wizard_shown_for_missing_permissions_and_boot_continues(
+        self, mocker, tmp_path, startup
+    ):
+        app_cls, wizard_cls = startup
+        mocker.patch("audiby.app.sys.platform", "darwin")
+        mocker.patch(
+            "audiby.app.get_missing_mac_permissions",
+            return_value=["input_monitoring", "accessibility"],
+        )
+        wizard_cls.return_value.run.return_value = SimpleNamespace(
+            status="continue", missing=["accessibility"]
+        )
+
+        assert run_app(self._config(tmp_path)) == 0
+
+        wizard_cls.assert_called_once_with(["input_monitoring", "accessibility"])
+        app_cls.return_value.start.assert_called_once()
+        app_cls.return_value.start_tray.assert_called_once()
+
+    def test_quit_from_wizard_exits_cleanly_without_booting(self, mocker, tmp_path, startup):
+        app_cls, wizard_cls = startup
+        mocker.patch("audiby.app.sys.platform", "darwin")
+        mocker.patch("audiby.app.get_missing_mac_permissions", return_value=["microphone"])
+        wizard_cls.return_value.run.return_value = SimpleNamespace(
+            status="quit", missing=["microphone"]
+        )
+
+        assert run_app(self._config(tmp_path)) == 0
+
+        app_cls.assert_not_called()
+
+    def test_wizard_runs_after_model_check(self, mocker, tmp_path, startup):
+        """A missing model is resolved first; a declined download never shows the wizard."""
+        app_cls, wizard_cls = startup
+        mocker.patch("audiby.app.sys.platform", "darwin")
+        mocker.patch("audiby.app.model_manager.exists", return_value=False)
+        dialog_cls = mocker.patch("audiby.app.DownloadDialog")
+        dialog_cls.return_value.run.return_value = SimpleNamespace(status="cancelled")
+        mocker.patch("audiby.app.get_missing_mac_permissions", return_value=["microphone"])
+
+        assert run_app(self._config(tmp_path)) == 1
+
+        wizard_cls.assert_not_called()
+        app_cls.assert_not_called()
+
+
+class TestRunAppSingleInstance:
+    """A second launch must exit without starting another pipeline."""
+
+    def test_second_launch_exits_cleanly_without_booting(self, mocker, tmp_path):
+        from audiby.platform.single_instance import SingleInstanceLock
+
+        config = MagicMock()
+        config.config_dir = tmp_path
+        config.get.side_effect = lambda key, default=None: {"model_size": "base"}.get(key, default)
+        mocker.patch("audiby.app.setup_logging", return_value=tmp_path / "audiby.log")
+        mocker.patch("audiby.app.model_manager.exists", return_value=True)
+        app_cls = mocker.patch("audiby.app.ApplicationOrchestrator")
+
+        # Simulate the "other" instance by holding the lock through a separate
+        # lock object; flock is per open file description, so a second
+        # descriptor in the same process is refused just like another process.
+        other = SingleInstanceLock(tmp_path)
+        assert other.acquire() is True
+        try:
+            assert run_app(config) == 0
+            app_cls.assert_not_called()
+        finally:
+            other.release()
+
+        # Once the holder is gone, startup proceeds and releases its own lock.
+        assert run_app(config) == 0
+        app_cls.return_value.start.assert_called_once()
+        assert SingleInstanceLock(tmp_path).acquire() is True
 
 
 # ---------------------------------------------------------------------------
