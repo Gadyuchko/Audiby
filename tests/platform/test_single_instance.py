@@ -13,10 +13,12 @@ def test_acquire_creates_lock_file_and_records_pid(tmp_path):
 
     assert lock.acquire() is True
     assert lock.held
-    assert (tmp_path / LOCK_FILENAME).read_text() == str(os.getpid())
 
     lock.release()
     assert not lock.held
+    # Read only after release: Windows byte-range locks are mandatory, so the
+    # locked file cannot be read through another handle while it is held.
+    assert (tmp_path / LOCK_FILENAME).read_text() == str(os.getpid())
 
 
 def test_acquire_is_idempotent_for_the_holder(tmp_path):
